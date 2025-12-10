@@ -45,7 +45,13 @@ class StreetNetworkProcessor:
         self.NPA_shape = gpd.read_file(self.NPA_shape_path)
 
         print("Base data loaded and initialized.")
-
+        
+    def _validate_crs(self):
+        if self.source_edges.crs != self.NPA_shape.crs:
+            raise ValueError(
+                f"CRS mismatch:\nEdges: {self.source_edges.crs}\nNPA: {self.NPA_shape.crs}\n"
+                "Please reproject before running."
+            )
     # --------------------------------------------------------------------------
     ## Step 1: Node Extraction (Mapping street endpoints to nodes)
     # --------------------------------------------------------------------------
