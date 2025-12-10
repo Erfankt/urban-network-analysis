@@ -41,6 +41,7 @@ The input datasets should follow the paths and the names defined in src/run_anal
 | `source_edges_path` | Study area street centerline dataset (GeoDataFrame) `../data/streetnetwork/streets.shp` 
 | `NPA_shape_path`    | Study area neighborhood polygons (GeoDataFrame) `../data/neighborhoods/neighborhoods.shp` 
 
+**Note: The study area neighborhood polygons must have a unique identifier column named "id"**
 
 Output files
 The pipeline generates:
