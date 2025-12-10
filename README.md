@@ -1,51 +1,130 @@
-Urban Street Network Analysis Pipeline (Academic Repository)
+# 🌐 Urban Street Network Analysis Pipeline  
+*Object-Oriented Geospatial & Graph-Theoretic Framework for Academic Research*
 
-This repository contains the complete, object-oriented Python pipeline used for the geographic and graph-theoretic analysis presented in the paper: Urban Street Network Configuration and Property Crime.
+This repository contains the complete, object-oriented Python pipeline used for the geographic and graph-theoretic analysis presented in the paper:
 
-The code pre-processes large geospatial street centerline datasets and calculates a comprehensive set of network measures (centrality, density, shortest path) for defined study areas (NPAs) across multiple buffer scales.
+**Urban Street Network Configuration and Property Crime**
 
-🚀 Key Features
+The pipeline preprocesses large geospatial street-centerline datasets and computes a comprehensive suite of network measures—including centrality, density, and shortest-path metrics—across multiple spatial scales for predefined study areas (e.g., Neighborhood Profile Areas / NPAs).
 
-Object-Oriented Design: Analysis logic is encapsulated in the StreetNetworkProcessor class for modularity.
+---
 
-Performance Tracking: Uses tqdm to provide visual progress bars for all time-consuming steps (Node Extraction, Simplification, and Iterative NPA Analysis).
+## 🚀 Key Features
 
-Network Simplification: Automatically removes redundant degree-2 nodes to create a topologically clean network for analysis.
+### ✔ Object-Oriented Architecture  
+All analysis logic is encapsulated in the `StreetNetworkProcessor` class for modularity, reusability, and extensibility.
 
-Scale Analysis: Supports calculation of measures across user-defined buffer distances (e.g., 0.25, 0.5, 1.0 miles).
+### ✔ Automated Network Simplification  
+Removes redundant degree-2 nodes to create a topologically clean network suitable for network science and spatial analysis.
 
-🛠️ Setup and Execution
+### ✔ Multi-Scale Buffer Analysis  
+Supports calculation of metrics at configurable spatial scales (e.g., `0.25`, `0.5`, `1.0` miles), enabling sensitivity checks and robustness analysis.
 
-1. Requirements
+---
 
-This project requires the following Python libraries. You can install them using the provided requirements.txt:
+## 🛠️ Setup and Installation
 
+### 1. Install Dependencies
+
+Install all required Python packages using:
+
+```bash
 pip install -r requirements.txt
+```
+
+## 📁 Data Preparation
+
+The input datasets should follow the paths defined in src/run_analysis.py.
+
+| Variable            | Description                                      
+| ------------------- | ----------------------------------------------- 
+| `source_edges_path` | Study area street centerline dataset (GeoDataFrame) `../data/streetnetwork` 
+| `NPA_shape_path`    | Study area neighborhood polygons (GeoDataFrame) `../data/neighborhoods` 
 
 
-2. Data Preparation
+Output files
+The pipeline generates:
 
-Place your required input files in the structure specified by the configuration in src/run_analysis.py:
+NPA_*.shp (one per study area) in `../data/neighborhoods`
 
-| File Variable | Description | Default Path |
-| source_edges_path | Global street centerline GeoDataFrame. | ../data/Streets_Meckl_10_8_2023/original_data/Streets.shp |
-| NPA_shape_path | Study area (NPA) boundary GeoDataFrame. | ../data/QOL/prpcrmarea_Ctrl.shp |
+Final_dataset.shp (merged dataset) in `../data/neighborhoods`
 
-Note: The output files (NPA_*.shp and Final_dataset.shp) will be created in the same directory as the input prpcrmarea_Ctrl.shp.
 
-3. Running the Analysis
+## ▶️ Running the Analysis
 
-The entire pipeline is executed via a single script:
+The main execution script is:
 
-(Optional) Configure: Modify the buffer_list_mile variable in src/run_analysis.py to change the analysis scales.
-
-Execute: Run the primary execution script from the root directory:
-
+```bash
 python src/run_analysis.py
+```
+## Optional Configuration
+
+You can modify the analysis scales in `src/run_analysis.py:`
+
+```bash
+buffer_list_mile = [0.25, 0.5, 1.0]
+```
+When running, the console will display progress bars for:
+
+* Node extraction
+
+* Network simplification
+
+* Each NPA’s analysis
 
 
-The console output will display the progress bars for node extraction, network simplification, and analysis of each NPA.
+## 📂 Repository Structure
 
-📜 License
+```
+├── data/                       # Input geospatial datasets (shapefiles)
+│   ├── neighborhoods/
+│   └── streetnetwork/
+├── src/
+│   ├── run_analysis.py         # Main execution script
+│   └── street_network_processor.py
+├── requirements.txt
+└── README.md
+```
 
-[Placeholder for your chosen license, e.g., MIT License]
+## 📜 License
+
+MIT License
+
+Copyright (c) 2025 Erfan Kefayat
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+## 🙌 Citation
+
+If you use this code in your research, please cite the associated paper:
+
+```
+Kefayat, E., & Thill, J.-C. (2025). Urban Street Network Configuration and Property Crime: An Empirical Multivariate Case Study. ISPRS International Journal of Geo-Information, 14(5), 200.
+https://doi.org/10.3390/ijgi14050200
+```
+
+## 💬 Contact
+
+For questions or collaboration, feel free to open an issue or email me at:
+
+```
+ekefayat@charlotte.edu
+```
+
