@@ -34,7 +34,7 @@ pip install -r requirements.txt
 
 ## 📁 Data Preparation
 
-The input datasets should follow the paths and the names defined in src/run_analysis.py.
+The input datasets must follow the paths and the names defined in src/run_analysis.py.
 
 | Variable            | Description                                      
 | ------------------- | ----------------------------------------------- 
