@@ -36,10 +36,10 @@ pip install -r requirements.txt
 
 The input datasets must follow the paths and the names defined in src/run_analysis.py.
 
-| Variable            | Description                                      
+| Type            | Description                                      
 | ------------------- | ----------------------------------------------- 
-| `source_edges_path` | Study area street centerline dataset (GeoDataFrame) `../data/streetnetwork/streets.shp` 
-| `NPA_shape_path`    | Study area neighborhood polygons (GeoDataFrame) `../data/neighborhoods/neighborhoods.shp` 
+| Shapefile | Study area street centerline dataset  `../data/streetnetwork/streets.shp` 
+| Shapefile    | Study area neighborhood polygons `../data/neighborhoods/neighborhoods.shp` 
 
 **Note: The study area neighborhood polygons must have a unique identifier column named "id"**
 
