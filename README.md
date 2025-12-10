@@ -73,6 +73,46 @@ When running, the console will display progress bars for:
 
 * Each neighborhood’s analysis
 
+## 📊 Street Network Metrics Computed by the Pipeline
+
+During execution, the pipeline computes a comprehensive set of graph-theoretic and geometric street-network metrics for each street network within buffer distances around each neighborhood polygon (e.g., 0.25, 0.5, 1.0 miles).
+
+## 🧮 List of Metrics and Their Meaning
+
+| Metric Code | Column Prefix | Description |
+|-------------|---------------|-------------|
+| `int_den`   | `int_denXX`   | Intersection density (intersections per unit area). |
+| `st_den`    | `st_denXX`    | Street density (length of streets per unit area). |
+| `nd_deg`    | `nd_degXX`    | Average node degree (mean number of connections per node). |
+| `cl_cof`    | `cl_cofXX`    | Average clustering coefficient of nodes. |
+| `shtpth`    | `shtpthXX`    | Average shortest path distance between pairwise nodes. |
+| `bt_cnt`    | `bt_cntXX`    | Betweenness centrality (averaged across all nodes). |
+| `cl_cnt`    | `cl_cntXX`    | Closeness centrality (averaged across all nodes). |
+| `pr_cnt`    | `pr_cntXX`    | PageRank centrality (averaged across all nodes). |
+
+## 🗂️ Column Name Convention
+
+Each metric is calculated at multiple buffer distances.
+Column names follow this pattern:
+
+```
+<metric_code><buffer_code>
+```
+
+Where:
+
+<metric_code> = prefix from the table above
+
+<buffer_code> = buffer size expressed in hundredths of a mile
+
+## ✔ Where These Columns Appear
+
+These columns are generated in the final output file:
+
+```
+../data/neighborhoods/Final_dataset.shp
+```
+
 
 ## 📂 Repository Structure
 
