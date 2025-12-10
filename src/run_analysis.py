@@ -12,7 +12,9 @@ warnings.filterwarnings("ignore")
 source_edges_path = "../data/streetnetwork/streets.shp"
 NPA_shape_path = "../data/neighborhoods/neighborhoods.shp"
 buffer_list_mile = [0.25, 0.5, 0.75, 1.0] # Define the list of buffer distances to analyze (in miles)
-
+ctrl_vars = ['bachdg', 'emp', 'home_own', 'resoccup', 'sinfamrate', 'sinfamage',
+       'hs_den', 'sinfamsize', 'salesprice', 'med_age', 'income', 'race_other',
+       'race_asian', 'race_black', 'race_latin', 'race_white', 'heatedarea']
 
 # --------------------------------------------------------------------------
 ## Execution Block
