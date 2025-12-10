@@ -1,4 +1,4 @@
-# 🌐 Urban Street Network Analysis Pipeline  
+# 🌐 Street Network Criminology Analysis Pipeline  
 *Object-Oriented Geospatial & Graph-Theoretic Framework for Academic Research*
 
 This repository contains the complete, object-oriented Python pipeline used for the geographic and graph-theoretic analysis presented in the paper:
