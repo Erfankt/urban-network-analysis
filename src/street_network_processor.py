@@ -236,9 +236,7 @@ class StreetNetworkProcessor:
         npa_gdf = self.NPA_shape[['id', 'geometry']].merge(
             pd.DataFrame(results_list), on='id', how='left'
         )
-        output_path = os.path.join(os.path.dirname(self.NPA_shape_path), f"NPA_{self.buffer_mile_name}.shp")
-        npa_gdf.to_file(output_path)
-        print(f"Results for buffer {self.buffer_mile} saved to {output_path}")
+        print(f"Results for buffer {self.buffer_mile} generated successfully!")
 
         return npa_gdf.drop(columns=['geometry'])
 
