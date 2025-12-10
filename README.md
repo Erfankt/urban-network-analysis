@@ -34,12 +34,12 @@ pip install -r requirements.txt
 
 ## 📁 Data Preparation
 
-The input datasets should follow the paths defined in src/run_analysis.py.
+The input datasets should follow the paths and the names defined in src/run_analysis.py.
 
 | Variable            | Description                                      
 | ------------------- | ----------------------------------------------- 
-| `source_edges_path` | Study area street centerline dataset (GeoDataFrame) `../data/streetnetwork` 
-| `NPA_shape_path`    | Study area neighborhood polygons (GeoDataFrame) `../data/neighborhoods` 
+| `source_edges_path` | Study area street centerline dataset (GeoDataFrame) `../data/streetnetwork/streets.shp` 
+| `NPA_shape_path`    | Study area neighborhood polygons (GeoDataFrame) `../data/neighborhoods/neighborhoods.shp` 
 
 
 Output files
