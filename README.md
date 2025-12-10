@@ -70,7 +70,7 @@ When running, the console will display progress bars for:
 
 * Network simplification
 
-* Each NPA’s analysis
+* Each neighborhood’s analysis
 
 
 ## 📂 Repository Structure
