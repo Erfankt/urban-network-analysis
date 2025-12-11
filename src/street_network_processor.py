@@ -1,8 +1,6 @@
-import os, numpy as np, pandas as pd, geopandas as gpd, networkx as nx, scipy
+import os, warnings, numpy as np, pandas as pd, geopandas as gpd, networkx as nx
 from shapely.geometry import Point, LineString, MultiLineString
 from tqdm import tqdm
-# Ignore all warnings related to geopandas/pandas versioning for cleaner script execution
-import warnings
 warnings.filterwarnings("ignore")
 
 
@@ -39,7 +37,6 @@ class StreetNetworkProcessor:
 
         # 1. Load and clean global edges: remove retired streets
         self.source_edges = gpd.read_file(self.source_edges_path)
-        self.source_edges = self.source_edges[self.source_edges["lifecycles"] != "retired"].reset_index(drop=True)
 
         # 2. Load NPA polygons: these define the study area boundaries
         self.NPA_shape = gpd.read_file(self.NPA_shape_path)
@@ -68,7 +65,7 @@ class StreetNetworkProcessor:
 
         total_edges = len(self.source_edges)  # Get total count for tqdm
 
-        # 🚨 TQDM INTEGRATION: Wrap the iteration over edges
+        # TQDM INTEGRATION: Wrap the iteration over edges
         for index, row in tqdm(self.source_edges.iterrows(), total=total_edges, desc="Extracting Nodes"):
             geometry = row['geometry']
             start_point = Point(geometry.coords[0])
@@ -163,7 +160,7 @@ class StreetNetworkProcessor:
             })
             return pd.concat([edges_df, new_edge], ignore_index=True)
 
-        # 🚨 TQDM INTEGRATION: Apply merging function with a progress bar
+        # TQDM INTEGRATION: Apply merging function with a progress bar
         print(f"Total degree-2 nodes to process: {len(nodes_with_two_edges)}")
         for node in tqdm(nodes_with_two_edges, desc="Simplifying Network (Merging Edges)"):
             edges_df = merge_edges_for_node(node, edges_df)
