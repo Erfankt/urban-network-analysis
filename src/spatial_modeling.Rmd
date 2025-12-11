@@ -73,7 +73,8 @@ required_packages <- c(
   "grid",        # Base R graphics layout
   "gridExtra",   # Arrange multiple grid-based plots
   "here",
-  "reticulate"
+  "reticulate",
+  "DHARMa"
   
 )
 
@@ -92,59 +93,51 @@ invisible(lapply(required_packages, library, character.only = TRUE))
 source_python("run_analysis.py")
 ```
 
-#User input
-
-```{r userinput}
-
-crime_column <- "propcrimct"                                  # Specify the crime variable used in the analysis
-
-
-```
-
-#Data pre-processing
+#Model pre-processing
 
 ```{r processing,include=FALSE}
 
-# 1. Read data
-original_data <- st_read(here("data/final_dataset/final_components.shp"))
+# 0. Importing crime column
+crime.col <- crime_col                                 
 
+# 1. Read data
+original.data <- st_read(here("data/final_dataset/final_components.shp"))
 data_additional <- st_read(here("data/neighborhoods/neighborhoods.shp")) |>
-  
   mutate(area = as.numeric(st_area(geometry))) |>
   st_drop_geometry() |>
-  select(id, all_of(crime_column), area)
+  select(id, all_of(crime.col), area)
 
 # 2. Join attributes
-original_data <- original_data |>
+original.data <- original.data |>
   left_join(data_additional, by = "id")
 
 # 3. Coordinates & neighbors
-coords <- st_coordinates(st_centroid(original_data))
-original_data$X <- coords[,1]
-original_data$Y <- coords[,2]
+coords <- st_coordinates(st_centroid(original.data))
+original.data$X <- coords[,1]
+original.data$Y <- coords[,2]
 
-nb <- poly2nb(original_data, queen = TRUE)
+nb <- poly2nb(original.data, queen = TRUE)
 lw <- nb2listw(nb, style = "W")
 
 # 4. Log-transform network PCs
-original_data <- original_data |>
+original.data <- original.data |>
   mutate(
-    across(matches("^PC[0-9]+_net$"), ~ log(.x + 1), .names = "{.col}_log")
+    across(matches("^PC[0-9]+_net$"), ~ log(.x + 1), .names = "{.col}_log")   #######################  WARNINg: log with +1 may not work here  ##########################
   ) |>
   select(-matches("^PC[0-9]+_net$"))
 
 # 5. Spatial lag of crime
-original_data$spatial_lag <- lag.listw(lw, original_data[[crime_column]])
+original.data$spatial_lag <- lag.listw(lw, original.data[[crime.col]])
 
 # 6. Model formulas
 independent_vars <- c(
-  grep("_log$", names(original_data), value = TRUE),
-  grep("^PC[0-9]+_ctrl$", names(original_data), value = TRUE)
+  grep("_log$", names(original.data), value = TRUE),
+  grep("^PC[0-9]+_ctrl$", names(original.data), value = TRUE)
 )
 
-formula_string <- paste(crime_column, "~", paste(independent_vars, collapse = " + "))
+formula_string <- paste(crime.col, "~", paste(independent_vars, collapse = " + "))
 
-base.model          <- as.formula(paste0(formula_string, " + offset(log(area))"))
+base.model <- as.formula(paste0(formula_string, " + offset(log(area))"))
 base.model.no.offset <- as.formula(formula_string)
 
 ```
@@ -153,7 +146,7 @@ base.model.no.offset <- as.formula(formula_string)
 
 ```{r overdispersion test, echo = TRUE}
 
-var <- original_data[[crime_column]]
+var <- original.data[[crime.col]]
 m <- mean(var); v <- var(var)
 cat("Overdispersion ratio:", v/m, "\n")
 
@@ -174,29 +167,38 @@ if (v/m > 1) {
 # GLM NB-based modeling and model diagnostics
 
 ```{r GLM NB-based, echo = TRUE}
-nb.glm <- glm.nb(base.model, data = original_data); summary(nb.glm)# NB GLM
-print(rsq(nb.glm, adj = TRUE))                                     # R²
+nb.glm <- glm.nb(base.model, data = original.data); summary(nb.glm)# NB GLM
+print(paste("R²:", rsq(nb.glm, adj = TRUE)))                       # R²
 check_overdispersion(nb.glm)                                       # Overdispersion
 
 # Diagnostics
 res.nb <- residuals(nb.glm, type = "pearson")
-print(moran.test(original_data[[crime_column]], lw))               # Moran on dependent
+print(moran.test(original.data[[crime.col]], lw))                  # Moran on dependent
 print(lm.morantest(nb.glm, listw = lw))                            # Moran on residuals
 bptest(nb.glm)                                                     # BP heteroscedasticity
 print(wald.test(b = coef(nb.glm), Sigma = vcov(nb.glm),
-                Terms = 2:length(coef(nb.glm))))                  # Wald test
-print(lm.RStests(nb.glm, lw, test = "all"))                       # LM spatial dependence tests
+                Terms = 2:length(coef(nb.glm))))                   # Wald test
+print(lm.RStests(nb.glm, lw, test = "all"))                        # LM spatial dependence tests
 ```
+
+
+
+
+
+
+
+
+
 
 #CAR NB-based modeling in a Bayesian environment
 
 ```{r CAR NB-based, echo = TRUE}
 
 # 1. Create a UID for INLA
-original_data$UID <- 1:nrow(original_data)
+original.data$UID <- 1:nrow(original.data)
 
 # 2. Build adjacency graph in INLA format
-nb <- poly2nb(original_data)
+nb <- poly2nb(original.data)
 nb_inla <- nb2INLA("adjacency.adj", nb)   # Creates adjacency.adj file
 
 # 3. Negative binomial CAR formula
@@ -216,8 +218,8 @@ formula.car.nb <- propcrimct ~
 m.car.nb <- inla(
   formula.car.nb,
   family = "nbinomial",
-  data = original_data,
-  offset = log(original_data$area),
+  data = original.data,
+  offset = log(original.data$area),
   control.predictor = list(compute = TRUE),
   control.compute = list(dic = TRUE, waic = TRUE),
   verbose = TRUE
@@ -348,13 +350,13 @@ posterior_plot <- ggplot() +
 # -----------------------------
 # 0. Rename for consistency
 # -----------------------------
-crime_var <- crime_column      # = "propcrimct"
+crime_var <- crime.col      # = "propcrimct"
 W_listw   <- lw                # spatial weights object
-area_log  <- log(original_data$area)   # earlier you used offset(log(area))
+area_log  <- log(original.data$area)   # earlier you used offset(log(area))
 
 # Ensure UID exists
-if (!"UID" %in% names(original_data)) {
-  original_data$UID <- seq_len(nrow(original_data))
+if (!"UID" %in% names(original.data)) {
+  original.data$UID <- seq_len(nrow(original.data))
 }
 
 # -----------------------------
@@ -382,7 +384,7 @@ f1 <- as.formula(
   )
 )
 
-mmatrix <- model.matrix(f1, original_data)
+mmatrix <- model.matrix(f1, original.data)
 
 # -----------------------------
 # 3. Eigenvalues for SLM bounds
@@ -427,7 +429,7 @@ formula.spatial_lag <- f1 +
 m.spatial_lag <- inla(
   formula.spatial_lag,
   family = "nbinomial",
-  data   = original_data,
+  data   = original.data,
   offset = area_log,
   control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
   control.predictor = list(compute = TRUE),
@@ -584,39 +586,39 @@ posterior_plot <- ggplot() +
 
 #Since there is no approach to find local p-values of coefficients, we need to standardize the formula and input it to the model, so the coefficients are comparable.
 
-# Standardizing the variables in original_data
-original_data_std <- original_data  # Copy the original data
+# Standardizing the variables in original.data
+original.data_std <- original.data  # Copy the original data
 
 # Apply z-score standardization (excluding the offset term)
-original_data_std$Factor_1 <- scale(original_data_std$Factor_1)
-original_data_std$Factor_2 <- scale(original_data_std$Factor_2)
-original_data_std$Factor_3 <- scale(original_data_std$Factor_3)
-original_data_std$Factor_4 <- scale(original_data_std$Factor_4)
-original_data_std$Factor_1 <- scale(original_data_std$Factor_1)
-original_data_std$Factor_5 <- scale(original_data_std$Factor_5)
-original_data_std$Factor_6 <- scale(original_data_std$Factor_6)
-original_data_std$Factor_7 <- scale(original_data_std$Factor_7)
-original_data_std$Factor_8 <- scale(original_data_std$Factor_8)
-original_data_std$Factor_9 <- scale(original_data_std$Factor_9)
-original_data_std$average.be_log <- scale(original_data_std$average.be_log)
-original_data_std$intersecti_log <- scale(original_data_std$intersecti_log)
-original_data_std$average.cl_log <- scale(original_data_std$average.cl_log)
-original_data_std$average.sh_log <- scale(original_data_std$average.sh_log)
-original_data_std$crime.count <- scale(original_data_std$crime.count)
+original.data_std$Factor_1 <- scale(original.data_std$Factor_1)
+original.data_std$Factor_2 <- scale(original.data_std$Factor_2)
+original.data_std$Factor_3 <- scale(original.data_std$Factor_3)
+original.data_std$Factor_4 <- scale(original.data_std$Factor_4)
+original.data_std$Factor_1 <- scale(original.data_std$Factor_1)
+original.data_std$Factor_5 <- scale(original.data_std$Factor_5)
+original.data_std$Factor_6 <- scale(original.data_std$Factor_6)
+original.data_std$Factor_7 <- scale(original.data_std$Factor_7)
+original.data_std$Factor_8 <- scale(original.data_std$Factor_8)
+original.data_std$Factor_9 <- scale(original.data_std$Factor_9)
+original.data_std$average.be_log <- scale(original.data_std$average.be_log)
+original.data_std$intersecti_log <- scale(original.data_std$intersecti_log)
+original.data_std$average.cl_log <- scale(original.data_std$average.cl_log)
+original.data_std$average.sh_log <- scale(original.data_std$average.sh_log)
+original.data_std$crime.count <- scale(original.data_std$crime.count)
 
-View(original_data_std)
+View(original.data_std)
 
 
 
 # #Select bandwidth using cross-validation
-# bandwidth <- ggwr.sel(formula, data = original_data_std,
+# bandwidth <- ggwr.sel(formula, data = original.data_std,
 #                       #adapt = TRUE,
-#                       coords = coords_original_data, family = negative.binomial(2.702), verbose = TRUE)
+#                       coords = coords_original.data, family = negative.binomial(2.702), verbose = TRUE)
 
 # # Perform the Geographically Weighted Poisson Regression
 # gwr_model <- ggwr(formula,
-#                   data = original_data_std,
-#                   coords = coords_original_data,
+#                   data = original.data_std,
+#                   coords = coords_original.data,
 #                   bandwidth = 33776.24, #bandwidth selected in the formula above.
 #                   family = negative.binomial(2.702),
 #                   type = "response"
@@ -663,9 +665,9 @@ print(aic)
 
 ```{r GWR NB-based , echo = TRUE}
 
-original_data_temp <- as(original_data, "Spatial")
+original.data_temp <- as(original.data, "Spatial")
 
-gwr_model_local <- gw.cov(original_data_temp,vars = independent_vars,bw = 33776.24, cor = FALSE)
+gwr_model_local <- gw.cov(original.data_temp,vars = independent_vars,bw = 33776.24, cor = FALSE)
 
 
 # Add p-values and z-scores to the SDF data
@@ -683,7 +685,7 @@ for (i in 1:length(predictor_names)) {
 
   gwr_model_local$SDF@data[, paste0("z_value.", predictor_names[i])] <- z_value
 
-  #df <- nrow(original_data) - length(street_measures) - 1  
+  #df <- nrow(original.data) - length(street_measures) - 1  
   df <- 316.9343 #found in arcgis
   p_values <- round(2 * (1 - pt(abs(z_value),df)), 6)
 
@@ -695,10 +697,10 @@ gwr_model_local$SDF@data <- gwr_model_local$SDF@data %>%
   dplyr::select(-starts_with("cov."))
 
 
-original_data_final <- cbind(original_data, gwr_model_local$SDF@data)
+original.data_final <- cbind(original.data, gwr_model_local$SDF@data)
 
 # View the updated SDF data with p-values and z-values
-View(original_data_final)
+View(original.data_final)
 
 ```
 
@@ -721,10 +723,10 @@ for (var in street_measures) {
   # Compute Standard Deviation of Deviance Residuals
   sd_resid <- sd(response_resids, na.rm = TRUE)
   
-  df <- nrow(original_data) - length(street_measures) - 1  # Adjusting for predictors & intercept
+  df <- nrow(original.data) - length(street_measures) - 1  # Adjusting for predictors & intercept
   
   # Compute Standard Error (SE) for the local coefficient
-  se <- sd_dev_resid / sqrt(nrow(original_data))
+  se <- sd_dev_resid / sqrt(nrow(original.data))
 
   # Compute pseudo-t statistic
   pseudo_t <- local_coef / se
@@ -746,9 +748,9 @@ for (var in street_measures) {
   }
 }
 
-original_data_final <- cbind(original_data, final_results_df)
-View(original_data_final)
-#st_write(original_data_final, "../GWR_NB_in_R.shp", delete_dsn = TRUE)
+original.data_final <- cbind(original.data, final_results_df)
+View(original.data_final)
+#st_write(original.data_final, "../GWR_NB_in_R.shp", delete_dsn = TRUE)
 
 ```
 
@@ -758,15 +760,15 @@ View(original_data_final)
 SS_DevResid <- sum(deviance_resids^2)
 
 # Calculate Total Sum of Squares (TSS)
-y_mean <- mean(original_data$crime.count)
-TSS <- sum((original_data$crime.count - y_mean)^2)
+y_mean <- mean(original.data$crime.count)
+TSS <- sum((original.data$crime.count - y_mean)^2)
 
 # Compute Pseudo R^2
 pseudo_R2 <- 1 - (SS_DevResid / TSS)
 pseudo_R2
 
 # Number of observations
-n <- nrow(original_data)
+n <- nrow(original.data)
 
 # Number of predictors (excluding intercept)
 k <- length(gwr_model$SDF) - 2  # Subtracting intercept and sum.w
