@@ -1,20 +1,23 @@
-from street_network_processor import StreetNetworkProcessor
-# Ignore all warnings related to geopandas/pandas versioning for cleaner script execution
 import warnings
+from street_network_processor import StreetNetworkProcessor
 warnings.filterwarnings("ignore")
 
+# --------------------------------------------------------------------------
+## USER INPUT
+# --------------------------------------------------------------------------
+
+# Define the list of buffer distances to analyze (in miles)
+buffer_list_mile = [0.25, 0.5, 0.75, 1.0]
+
+# Define the list of your control variables located in the attributes of neighborhood shapefile
+ctrl_vars = ['bachdg', 'emp', 'home_own', 'resoccup', 'sinfamrate', 'sinfamage']
 
 # --------------------------------------------------------------------------
 ## Configuration
 # --------------------------------------------------------------------------
 
-# Define file paths using your project structure
 source_edges_path = "../data/streetnetwork/streets.shp"
 NPA_shape_path = "../data/neighborhoods/neighborhoods.shp"
-buffer_list_mile = [0.25, 0.5, 0.75, 1.0] # Define the list of buffer distances to analyze (in miles)
-ctrl_vars = ['bachdg', 'emp', 'home_own', 'resoccup', 'sinfamrate', 'sinfamage',
-       'hs_den', 'sinfamsize', 'salesprice', 'med_age', 'income', 'race_other',
-       'race_asian', 'race_black', 'race_latin', 'race_white', 'heatedarea']
 
 # --------------------------------------------------------------------------
 ## Execution Block
