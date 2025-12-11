@@ -87,13 +87,15 @@ for (pkg in required_packages) {
 # Load all required libraries
 invisible(lapply(required_packages, library, character.only = TRUE))
 ```
+
+#User input
+
 ```{r userinput}
 
 crime_column <- "propcrimct"                                  # Specify the crime variable used in the analysis
 
 
 ```
-
 
 #Data pre-processing
 
@@ -103,6 +105,7 @@ crime_column <- "propcrimct"                                  # Specify the crim
 original_data <- st_read(here("data/final_dataset/final_components.shp"))
 
 data_additional <- st_read(here("data/neighborhoods/neighborhoods.shp")) |>
+  
   mutate(area = as.numeric(st_area(geometry))) |>
   st_drop_geometry() |>
   select(id, all_of(crime_column), area)
@@ -141,6 +144,7 @@ base.model          <- as.formula(paste0(formula_string, " + offset(log(area))")
 base.model.no.offset <- as.formula(formula_string)
 
 ```
+
 # Crime Count distribution type
 
 ```{r overdispersion test, echo = TRUE}
@@ -162,6 +166,7 @@ if (v/m > 1) {
 }
 
 ```
+
 # GLM NB-based modeling and model diagnostics
 
 ```{r GLM NB-based, echo = TRUE}
@@ -178,7 +183,6 @@ print(wald.test(b = coef(nb.glm), Sigma = vcov(nb.glm),
                 Terms = 2:length(coef(nb.glm))))                  # Wald test
 print(lm.RStests(nb.glm, lw, test = "all"))                       # LM spatial dependence tests
 ```
-
 
 #CAR NB-based modeling in a Bayesian environment
 
@@ -333,7 +337,6 @@ posterior_plot <- ggplot() +
 
 ```
 
-
 #SAR NB-based modeling in a Bayesian environment
 
 ```{r SAR NB-based, echo = TRUE}
@@ -442,6 +445,8 @@ rho_marginal_rescaled <- inla.tmarginal(
 inla.zmarginal(rho_marginal_rescaled)
 
 ```
+
+
 
 ```{r SAR NB-based model analysis_new, echo = TRUE}
 
