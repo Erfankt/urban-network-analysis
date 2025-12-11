@@ -1,0 +1,906 @@
+---
+title: "spatial_modeling"
+author: "Erfan Kefayat"
+date: "2025-02-11"
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
+  beamer_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(scipen = 999)
+```
+
+## R Markdown
+
+This is an R Markdown presentation. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document.
+
+```{r libraries,include=FALSE, echo = FALSE}
+# ================================
+# Install & Load Required Packages
+# ================================
+
+# List of packages with short descriptions
+required_packages <- c(
+  # Spatial data handling & mapping
+  "sp",          # Base spatial data classes
+  "spdep",       # Spatial dependence and autocorrelation
+  "sf",          # Simple features for spatial vector data
+  "tmap",        # Thematic maps
+  "leaflet",     # Interactive maps
+  "spgwr",       # Geographically Weighted Regression
+  "gwzinbr",     # GWR for Zero-Inflated Negative Binomial Regression
+  "mgwnbr",      # Mixed Geographically Weighted Negative Binomial Regression
+  "GWmodel",     # Advanced GWR and spatial stats
+  
+  # Spatial modeling & Bayesian inference
+  "spatialreg",  # Spatial regression models
+  "spaMM",       # Spatial GLMMs
+  "glmmfields",  # GLMMs for spatial and spatiotemporal data
+  "CARBayes",    # Conditional Autoregressive Bayesian models
+  "INLA",        # Integrated Nested Laplace Approximation
+  "bigDM",       # Scalable spatial models
+  "nimble",      # Flexible Bayesian modeling
+  "geostan",     # Bayesian spatial analysis
+  "R2WinBUGS",   # Interface to WinBUGS
+  "coda",        # MCMC diagnostics
+  "aod",         # Analysis of Overdispersed Data
+  
+  # Network, distance & movement analysis
+  "igraph",      # Network analysis
+  "gdistance",   # Geographic distances and least-cost paths
+  "adehabitatHR",# Home range estimation (wildlife movement)
+  
+  # Regression & statistical modeling
+  "dplyr",       # Data manipulation
+  "tidyr",       # Data tidying
+  "ggplot2",     # Visualization
+  "lmtest",      # Diagnostic tests for linear models
+  "performance", # Model performance metrics
+  "car",         # Companion to Applied Regression
+  "pscl",        # Political science computation library
+  "rsq",         # R-squared calculations
+  "psych",       # Psychometric analysis
+  "MASS",        # Modern Applied Statistics
+  "seqHMM",      # Hidden Markov Models for sequences
+  
+  # Miscellaneous
+  "zoo",         # Time series
+  "RcmdrMisc",   # Misc functions from R Commander
+  "grid",        # Base R graphics layout
+  "gridExtra"    # Arrange multiple grid-based plots
+)
+
+# Install any packages that are not yet installed
+installed_packages <- rownames(installed.packages())
+for (pkg in required_packages) {
+  if (!(pkg %in% installed_packages)) {
+    install.packages(pkg)
+  }
+}
+
+# Load all required libraries
+invisible(lapply(required_packages, library, character.only = TRUE))
+```
+
+#Data pre-processing
+
+```{r processing,include=FALSE}
+crime_data <- st_read("../data/final_dataset/extracted") #Reading the main data frame
+
+
+# adding crime count to the dataset and manipulating data
+data_additional <- st_read("../../data/QOL/Final_dataset.shp")
+data_additional <- data_additional %>%
+  dplyr::select(id, propcrimct, area_acre)
+geometry_factored <- st_geometry(crime_data)
+st_geometry(crime_data) <- NULL
+# Check if data_additional has geometry
+if ("geometry" %in% names(data_additional)) {
+  # Remove geometry
+  st_geometry(data_additional) <- NULL
+}
+data_additional <- data_additional %>%
+  dplyr::select(id, propcrimct, area_acre)
+data_combined <- crime_data %>%
+  left_join(data_additional, by = "id")
+crime_data <- st_as_sf(data_combined, geometry = geometry_factored)
+names(crime_data)[names(crime_data) == "propcrimct"] <- "crime.count"
+names(crime_data)[names(crime_data) == "property.c"] <- "crime.rate"
+
+
+
+#Extracting the coordinates and creating queens spatial matrix
+coords_crime_data <- st_coordinates(st_centroid(crime_data))
+crime_data$X <- coords_crime_data[, "X"]
+crime_data$Y <- coords_crime_data[, "Y"]
+
+data_nb <- poly2nb(crime_data, queen = TRUE)
+adj_matrix <- nb2mat(data_nb, style="B")
+row.names(adj_matrix) <- NULL
+data_listw <- nb2listw(data_nb, style = "W")
+
+#Log transformation of network measures
+crime_data$average.be_log <- log(crime_data$average.be + 1)
+crime_data$intersecti_log <- log(crime_data$intersecti+ 1)
+crime_data$average.cl_log <- log(crime_data$average.cl + 1)
+crime_data$average.sh_log <- log(crime_data$average.sh + 1)
+
+# Defining unique identifier for each feature
+crime_data$UID <- as.numeric(factor(crime_data$id))
+
+# Create spatial lag of the dependent variable (crime.count)
+crime_data$spatial_lag <- lag.listw(data_listw, crime_data$crime.count)
+
+#Removing unnecessary object
+rm(data_additional)
+rm(data_combined)
+rm(geometry_factored)
+
+#Removing unneccessary Variables
+crime_data <- crime_data %>%
+  dplyr::select(-average.be,-intersecti, -average.cl, -average.sh)
+#Defining dependent and independent variables
+independent_vars <- c(
+  "average.be_log",
+  "intersecti_log",
+  "average.cl_log",
+  "average.sh_log",
+  "Factor_1", "Factor_2", 
+  "Factor_3", "Factor_4", 
+  "Factor_5", "Factor_6",
+  "Factor_7", "Factor_8",
+  "Factor_9"
+)
+dependent_var_name <- "crime.count"
+
+street_measures <- c("average.be_log", "intersecti_log", "average.cl_log", "average.sh_log")
+
+# Prepare the model formula (with inclusion of the offset parameter)
+formula <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
+           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
+           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9 + offset(log(area_acre))
+
+crime_data$area_acre_logged <- log(crime_data$area_acre)
+
+formula.no.offset <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
+           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
+           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9
+
+```
+
+#Descriptive stats of Street network measures
+
+```{r Descriptive stats,include=FALSE}
+
+crime_data_df <- st_drop_geometry(crime_data)
+
+
+desc_stats <- psych::describe(crime_data_df[, street_measures])
+#View(desc_stats)
+
+rm(crime_data_df)
+
+#write.csv(desc_stats, "descriptive_statistics.csv", row.names = TRUE)
+
+```
+
+
+# Crime Count distribution type
+
+```{r GLM NB-based, echo = TRUE}
+
+#Checking if "crime.count" follows Poisson dist or BN dist.
+var <- crime_data$crime.count
+mean_var <- mean(var); var_var <- var(var)
+overidpersion.ratio <- var_var / mean_var; cat("Overdispersion ratio:",overidpersion.ratio)
+
+# Check if mean and variance are approximately equal
+if (abs(mean_var - var_var) < 0.05 * mean_var) {
+  print("The mean and variance are approximately equal, which is a characteristic of a Poisson distribution.")
+} else {
+  print("The mean and variance are not equal, which may suggest the data does not follow a Poisson distribution.")
+}
+
+dispersion <- var_var / mean_var # Check dispersion
+if (dispersion > 1) {
+  print("The data shows overdispersion, which is characteristic of a Negative Binomial distribution.")
+} else {
+  print("The data does not show overdispersion; the Negative Binomial distribution might not be appropriate.")
+}
+```
+
+
+# GLM NB-based modeling and model diagnostics
+
+```{r GLM NB-based, echo = TRUE}
+nb.glm <- glm.nb(formula, data = crime_data);summary(nb.glm)
+
+# capturing the R-squared values
+rsq_value <- rsq(nb.glm, adj = TRUE);print(rsq_value)
+
+
+#checking the overdispersion
+check_overdispersion(nb.glm) # method1
+
+#Model diagnostics
+residuals_nb <- residuals(nb.glm, type = "pearson")
+#moran_test <- moran.test(residuals_nb, data_listw);print(moran_test) # Moran's test on residuals
+moran_test_dependent <- moran.test(crime_data$crime.count, data_listw);print(moran_test_dependent) # Moran's test on dependent variable
+lm_test <- lm.morantest(nb.glm, listw = data_listw);print(lm_test) # Moran's test on residuals
+bptest(nb.glm) # Breusch-Pagan test for heteroscedasticity
+wald_test <- wald.test(b = coef(nb.glm), Sigma = vcov(nb.glm), Terms = 2:length(coef(nb.glm)));print(wald_test) #Wald test #Terms argument checks all coefficients except the intercept
+lag_error_test <- lm.RStests(nb.glm, data_listw, test = "all");print(lag_error_test) # Perform the LM tests for spatial dependence
+```
+
+
+#CAR NB-based modeling in a Bayesian environment
+
+```{r CAR NB-based, echo = TRUE}
+
+
+#Log-Poisson regression with random effects
+formula.m0.besag <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
+           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
+           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9 +
+           f(UID,
+             model = "besag",
+             graph = adj_matrix,
+             hyper = list(prec = list(prior = "loggamma", param = c(1, 0.01)))
+             )  # This is spatial random effect (accounting for CAR)
+
+
+
+m0.besag  <- inla(formula.m0.besag,
+            family = "nbinomial",
+            data = crime_data,
+            offset = crime_data$area_acre_logged,
+            control.predictor = list(compute = TRUE),
+            control.compute = list(dic = TRUE, waic = TRUE),
+            control.fixed = list(
+                mean = 0,      # Prior mean for fixed effects
+                prec = 0.01    # Precision (1/variance) for fixed effects
+            ),
+            verbose = inla.getOption("verbose")
+            );summary(m0.besag)
+
+```
+
+#CAR NB-based model analysis
+
+```{r CAR NB-based analysis , echo = TRUE}
+
+# Extract marginal distribution for 'average.be_log' from CAR model
+average_be_log_marginal <- m0.besag$marginals.fixed$average.sh_log
+
+# Compute posterior probabilities
+prob_negative <- inla.pmarginal(0, average_be_log_marginal)
+prob_positive <- 1 - prob_negative
+
+# Compute posterior mean and SD
+mean_be_log <- inla.emarginal(function(x) x, average_be_log_marginal)
+var_be_log <- inla.emarginal(function(x) x^2, average_be_log_marginal) - mean_be_log^2
+sd_be_log <- sqrt(var_be_log)
+
+# Convert marginal to dataframe
+average_be_log_df <- data.frame(
+  x = average_be_log_marginal[, 1],
+  density = average_be_log_marginal[, 2]
+)
+
+# Split for red and blue shading
+df_negative <- average_be_log_df %>% filter(x < 0)
+df_positive <- average_be_log_df %>% filter(x >= 0)
+
+# Compute percentiles (every 5%)
+percentiles <- seq(0.05, 0.95, by = 0.05)
+percentile_values <- sapply(percentiles, function(p) inla.qmarginal(p, average_be_log_marginal))
+percentile_table <- data.frame(
+  Percentile = paste0(percentiles * 100, "%"),
+  Value = round(percentile_values, 4)
+)
+
+# Create plot
+posterior_plot <- ggplot() +
+  geom_area(data = df_negative, aes(x = x, y = density), fill = "red", alpha = 0.4) +
+  geom_area(data = df_positive, aes(x = x, y = density), fill = "blue", alpha = 0.4) +
+  geom_line(data = average_be_log_df, aes(x = x, y = density), size = 1.2, color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "darkred", size = 0.8) +
+  geom_vline(xintercept = mean_be_log, linetype = "solid", color = "blue", size = 1.2) +
+  geom_vline(xintercept = mean_be_log + sd_be_log, linetype = "dotted", color = "darkblue", size = 1) +
+  geom_vline(xintercept = mean_be_log - sd_be_log, linetype = "dotted", color = "darkblue", size = 1) +
+
+  # Probability labels with corresponding colors
+  annotate("text",
+           x = max(average_be_log_df$x) - 0.1,
+           y = max(average_be_log_df$density) * 1.05,
+           label = paste0("Negative Probability: ", round(prob_negative, 3)),
+           color = "red", size = 4, hjust = 1, fontface = "italic") +
+
+  annotate("text",
+           x = max(average_be_log_df$x) - 0.1,
+           y = max(average_be_log_df$density) * 0.95,
+           label = paste0("Positive Probability: ", round(prob_positive, 3)),
+           color = "blue", size = 4, hjust = 1, fontface = "italic") +
+
+  # Mean and SD labels
+  annotate("text", x = mean_be_log, y = max(average_be_log_df$density) * 0.85,
+           label = "Mean", color = "blue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text", x = mean_be_log + sd_be_log, y = max(average_be_log_df$density) * 0.75,
+           label = "+1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text", x = mean_be_log - sd_be_log, y = max(average_be_log_df$density) * 0.75,
+           label = "−1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
+
+  labs(x = "Effect Size", y = "Posterior Density") +
+  scale_x_continuous(
+    breaks = seq(floor(min(average_be_log_df$x)), ceiling(max(average_be_log_df$x)), by = 1),
+    labels = function(x) gsub("-", "\u2212", x)
+  ) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 8)) +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "grey85"),
+    panel.grid.minor = element_line(color = "grey90", size = 0.1),
+    axis.title.x = element_text(size = 10, face = "plain"),
+    axis.title.y = element_text(size = 10, face = "plain"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    plot.title = element_blank()
+  )
+# Export everything to PDF
+pdf("average_be_log_CAR_output.pdf", width = 8, height = 10)
+
+# 1. Plot
+print(posterior_plot)
+
+# 2. Marginal table
+grid.newpage()
+grid.text("Posterior Marginal Distribution (first 20 rows)", y = 0.95,
+          gp = gpar(fontsize = 12, fontface = "bold"))
+grid.draw(tableGrob(head(average_be_log_df, 20)))
+
+# 3. Percentile table
+grid.newpage()
+grid.text("Posterior Percentiles (5% increments)", y = 0.95,
+          gp = gpar(fontsize = 12, fontface = "bold"))
+grid.draw(tableGrob(percentile_table))
+
+dev.off()
+
+posterior_plot
+
+```
+
+
+
+
+#SAR NB-based modeling in a Bayesian environment
+
+```{r SAR NB-based, echo = TRUE}
+
+
+## Sparsing data_listw
+data_listw_sparsed <- as(as_dgRMatrix_listw(data_listw), "CsparseMatrix")
+
+
+## Model definition
+f1 <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
+           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
+           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9
+mmatrix <- model.matrix(f1, crime_data)
+
+
+## Zero-variance for error term
+zero.variance = list(prec=list(initial = 25, fixed=TRUE))
+
+## Compute eigenvalues for SLM model, used to obtain rho.min and
+## rho.max
+e <- eigenw(data_listw)
+re.idx <- which(abs(Im(e)) < 1e-6)
+rho.max <- 1 / max(Re(e[re.idx]))
+rho.min <- 1 / min(Re(e[re.idx]))
+
+## Precision matrix for beta coeffients’ prior
+betaprec <- 1
+Q.beta = Diagonal(n=ncol(mmatrix), betaprec)
+
+## Priors on the hyperparameters
+hyper = list(
+             prec = list(
+                prior = "loggamma",
+                param = c(0.1, 0.1)
+                        ),
+             rho = list(
+                initial=0,
+                prior = "logitbeta",
+                param = c(1,1)
+                        )
+             )
+
+
+
+# Define spatial lag model for spatial effects
+formula.m0.spatial_lag <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
+                           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
+                           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9 +
+                              f(UID,
+                                model="slm",
+                                args.slm=list(
+                                rho.min = rho.min,
+                                rho.max = rho.max,
+                                W=data_listw_sparsed,
+                                X=mmatrix,
+                                Q.beta=Q.beta),
+                                hyper=hyper)
+
+# Fit the model
+m0.spatial_lag <- inla(
+            formula.m0.spatial_lag,
+            family = "nbinomial",
+            data = crime_data,
+            offset = crime_data$area_acre_logged,
+            control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
+            verbose = inla.getOption("verbose")
+)
+
+# Summary of the model
+summary(m0.spatial_lag)
+
+
+## Re-scale rho to real scale
+rhomarg <- inla.tmarginal(function(x){rho.min+x*(rho.max-rho.min)},
+m0.spatial_lag$marginals.hyperpar[[2]])
+inla.zmarginal(rhomarg)
+```
+
+```{r SAR NB-based model analysis_new, echo = TRUE}
+
+# Extract marginal distribution for 'average.be_log'
+average_be_log_marginal <- m0.spatial_lag$marginals.fixed$average.sh_log
+
+# See the structure
+average_be_log_marginal
+
+# Probability that the coefficient is negative (x < 0)
+prob_negative <- inla.pmarginal(0, average_be_log_marginal)
+
+# Probability that the coefficient is positive (x ≥ 0)
+prob_positive <- 1 - prob_negative
+
+# Compute posterior mean and SD
+mean_be_log <- inla.emarginal(function(x) x, average_be_log_marginal)
+var_be_log <- inla.emarginal(function(x) x^2, average_be_log_marginal) - mean_be_log^2
+sd_be_log <- sqrt(var_be_log)
+
+# Convert marginal to dataframe
+average_be_log_df <- data.frame(
+  x = average_be_log_marginal[, 1],
+  density = average_be_log_marginal[, 2]
+)
+
+# Split for red and blue shading
+df_negative <- average_be_log_df %>% filter(x < 0)
+df_positive <- average_be_log_df %>% filter(x >= 0)
+
+# Percentiles
+percentiles <- seq(0.05, 0.95, by = 0.05)
+percentile_values <- sapply(percentiles, function(p) inla.qmarginal(p, average_be_log_marginal))
+percentile_table <- data.frame(
+  Percentile = paste0(percentiles * 100, "%"),
+  Value = round(percentile_values, 4)
+)
+
+# Plot
+posterior_plot <- ggplot() +
+  geom_area(data = df_negative, aes(x = x, y = density), fill = "red", alpha = 0.4) +
+  geom_area(data = df_positive, aes(x = x, y = density), fill = "blue", alpha = 0.4) +
+  geom_line(data = average_be_log_df, aes(x = x, y = density), size = 1.2, color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "darkred", size = 0.8) +
+  geom_vline(xintercept = mean_be_log, linetype = "solid", color = "blue", size = 1.2) +
+  geom_vline(xintercept = mean_be_log + sd_be_log, linetype = "dotted", color = "darkblue", size = 1) +
+  geom_vline(xintercept = mean_be_log - sd_be_log, linetype = "dotted", color = "darkblue", size = 1) +
+  annotate("text",
+           x = max(average_be_log_df$x) - 0.1,
+           y = max(average_be_log_df$density) * 1.05,
+           label = paste0("Negative Probability: ", round(prob_negative, 3)),
+           color = "red", size = 4, hjust = 1, fontface = "italic") +
+  annotate("text",
+           x = max(average_be_log_df$x) - 0.1,
+           y = max(average_be_log_df$density) * 0.95,
+           label = paste0("Positive Probability: ", round(prob_positive, 3)),
+           color = "blue", size = 4, hjust = 1, fontface = "italic") +
+  annotate("text", x = mean_be_log, y = max(average_be_log_df$density) * 0.85, label = "Mean", color = "blue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text", x = mean_be_log + sd_be_log, y = max(average_be_log_df$density) * 0.75, label = "+1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text", x = mean_be_log - sd_be_log, y = max(average_be_log_df$density) * 0.75, label = "−1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
+  labs(x = "Effect Size", y = "Posterior Density") +
+  scale_x_continuous(
+    breaks = seq(floor(min(average_be_log_df$x)), ceiling(max(average_be_log_df$x)), by = 1),
+    labels = function(x) gsub("-", "\u2212", x)  # replaces hyphen with correct minus
+  ) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 8)) +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "grey85"),
+    panel.grid.minor = element_line(color = "grey90", size = 0.1),
+    axis.title.x = element_text(size = 10, face = "plain"),
+    axis.title.y = element_text(size = 10, face = "plain"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    plot.title = element_blank()
+  )
+
+
+# Export everything to PDF
+pdf("average_be_log_output.pdf", width = 8, height = 10)
+
+# 1. Plot
+print(posterior_plot)
+
+# 2. Marginal table
+grid.newpage()
+grid.text("Posterior Marginal Distribution (first 20 rows)", y = 0.95, gp = gpar(fontsize = 12, fontface = "bold"))
+grid.draw(tableGrob(head(average_be_log_df, 20)))
+
+# 3. Percentile table
+grid.newpage()
+grid.text("Posterior Percentiles (5% increments)", y = 0.95, gp = gpar(fontsize = 12, fontface = "bold"))
+grid.draw(tableGrob(percentile_table))
+
+dev.off()
+
+posterior_plot
+
+```
+
+
+# GWR NB-based modeling and model diagnostics
+
+```{r GWR NB-based , echo = TRUE}
+
+
+#theta is calculated in the glm.nb model above (2.702)
+
+
+#Since there is no approach to find local p-values of coefficients, we need to standardize the formula and input it to the model, so the coefficients are comparable.
+
+# Standardizing the variables in crime_data
+crime_data_std <- crime_data  # Copy the original data
+
+# Apply z-score standardization (excluding the offset term)
+crime_data_std$Factor_1 <- scale(crime_data_std$Factor_1)
+crime_data_std$Factor_2 <- scale(crime_data_std$Factor_2)
+crime_data_std$Factor_3 <- scale(crime_data_std$Factor_3)
+crime_data_std$Factor_4 <- scale(crime_data_std$Factor_4)
+crime_data_std$Factor_1 <- scale(crime_data_std$Factor_1)
+crime_data_std$Factor_5 <- scale(crime_data_std$Factor_5)
+crime_data_std$Factor_6 <- scale(crime_data_std$Factor_6)
+crime_data_std$Factor_7 <- scale(crime_data_std$Factor_7)
+crime_data_std$Factor_8 <- scale(crime_data_std$Factor_8)
+crime_data_std$Factor_9 <- scale(crime_data_std$Factor_9)
+crime_data_std$average.be_log <- scale(crime_data_std$average.be_log)
+crime_data_std$intersecti_log <- scale(crime_data_std$intersecti_log)
+crime_data_std$average.cl_log <- scale(crime_data_std$average.cl_log)
+crime_data_std$average.sh_log <- scale(crime_data_std$average.sh_log)
+crime_data_std$crime.count <- scale(crime_data_std$crime.count)
+
+View(crime_data_std)
+
+
+
+# #Select bandwidth using cross-validation
+# bandwidth <- ggwr.sel(formula, data = crime_data_std,
+#                       #adapt = TRUE,
+#                       coords = coords_crime_data, family = negative.binomial(2.702), verbose = TRUE)
+
+# # Perform the Geographically Weighted Poisson Regression
+# gwr_model <- ggwr(formula,
+#                   data = crime_data_std,
+#                   coords = coords_crime_data,
+#                   bandwidth = 33776.24, #bandwidth selected in the formula above.
+#                   family = negative.binomial(2.702),
+#                   type = "response"
+#                   )
+# 
+# 
+# 
+# # View the results
+# print(gwr_model)
+# summary(gwr_model$SDF@data)
+# View(gwr_model$SDF@data)
+
+
+```
+
+# AIC and Log-liklihood of the GWR NB-based model
+
+```{r GWR NB-based , echo = TRUE}
+
+
+raw_residuals <- gwr_model$SDF$response_resids
+
+# Calculate the variance of the residuals
+sigma_squared <- var(raw_residuals)
+
+# Calculate the log-likelihood
+log_likelihood <- -0.5 * (length(raw_residuals) * log(2 * pi) + length(raw_residuals) * log(sigma_squared) + sum((raw_residuals)^2) / sigma_squared)
+
+#Number of parameters:
+
+k <- 15 #including intercept and Dispersion parameter (θ) for Negative Binomial
+
+# Calculate AIC
+aic <- -2 * log_likelihood + 2 * (k)
+
+# Print AIC
+print(log_likelihood)
+print(aic)
+
+```
+
+
+# GWR NB-based model's local stats
+
+```{r GWR NB-based , echo = TRUE}
+
+crime_data_temp <- as(crime_data, "Spatial")
+
+gwr_model_local <- gw.cov(crime_data_temp,vars = independent_vars,bw = 33776.24, cor = FALSE)
+
+
+# Add p-values and z-scores to the SDF data
+predictor_names <- c("average.be_log", "intersecti_log", "average.cl_log", "average.sh_log",
+                     "Factor_1", "Factor_2", "Factor_3", "Factor_4",
+                     "Factor_5", "Factor_6", "Factor_7", "Factor_8", "Factor_9")
+
+
+for (i in 1:length(predictor_names)) {
+
+  mean.predictor <- gwr_model_local$SDF@data[, paste0("mean.", predictor_names[i])]
+  se <- gwr_model_local$SDF@data[, paste0("sem.", predictor_names[i])]
+
+  z_value <- mean.predictor / se   # Compute z-scores
+
+  gwr_model_local$SDF@data[, paste0("z_value.", predictor_names[i])] <- z_value
+
+  #df <- nrow(crime_data) - length(street_measures) - 1  
+  df <- 316.9343 #found in arcgis
+  p_values <- round(2 * (1 - pt(abs(z_value),df)), 6)
+
+
+  gwr_model_local$SDF@data[, paste0("p_value.", predictor_names[i])] <- p_values
+}
+
+gwr_model_local$SDF@data <- gwr_model_local$SDF@data %>% 
+  dplyr::select(-starts_with("cov."))
+
+
+crime_data_final <- cbind(crime_data, gwr_model_local$SDF@data)
+
+# View the updated SDF data with p-values and z-values
+View(crime_data_final)
+
+```
+
+
+```{r GWR NB-based , echo = TRUE}
+
+View(gwr_model$SDF@data)
+
+
+# Initialize an empty data frame to store results
+final_results_df <- data.frame()
+
+# Loop through each variable in street_measures
+for (var in street_measures) {
+  
+  local_coef <- gwr_model$SDF[[var]]
+  #deviance_resids <- gwr_model$SDF@data$deviance_resids
+  response_resids <- gwr_model$SDF@data$Response_Residuals
+  
+  # Compute Standard Deviation of Deviance Residuals
+  sd_resid <- sd(response_resids, na.rm = TRUE)
+  
+  df <- nrow(crime_data) - length(street_measures) - 1  # Adjusting for predictors & intercept
+  
+  # Compute Standard Error (SE) for the local coefficient
+  se <- sd_dev_resid / sqrt(nrow(crime_data))
+
+  # Compute pseudo-t statistic
+  pseudo_t <- local_coef / se
+
+  # Compute p-values
+  p_values <- round(2 * (1 - pt(abs(pseudo_t), df)), 6)
+
+  # Create temporary results data frame
+  temp_df <- cbind(
+    setNames(data.frame(local_coef), paste0("B_", var)), 
+    setNames(data.frame(p_values), paste0("sig_", var))
+  )
+  
+  # Combine with final results
+  if (nrow(final_results_df) == 0) {
+    final_results_df <- temp_df
+  } else {
+    final_results_df <- cbind(final_results_df, temp_df)
+  }
+}
+
+crime_data_final <- cbind(crime_data, final_results_df)
+View(crime_data_final)
+#st_write(crime_data_final, "../GWR_NB_in_R.shp", delete_dsn = TRUE)
+
+```
+
+```{r GWR NB-based , echo = TRUE}
+
+# Calculate Sum of Squared Deviance Residuals
+SS_DevResid <- sum(deviance_resids^2)
+
+# Calculate Total Sum of Squares (TSS)
+y_mean <- mean(crime_data$crime.count)
+TSS <- sum((crime_data$crime.count - y_mean)^2)
+
+# Compute Pseudo R^2
+pseudo_R2 <- 1 - (SS_DevResid / TSS)
+pseudo_R2
+
+# Number of observations
+n <- nrow(crime_data)
+
+# Number of predictors (excluding intercept)
+k <- length(gwr_model$SDF) - 2  # Subtracting intercept and sum.w
+
+# Compute Adjusted Pseudo R^2
+adj_pseudo_R2 <- 1 - ((1 - pseudo_R2) / (1 - (k / n)))
+adj_pseudo_R2
+
+
+
+
+```
+
+
+<!-- # MGWR NB-based modeling and model diagnostics -->
+
+<!-- ```{r MGWR NB-based, echo = TRUE} -->
+
+
+<!-- # Golden( -->
+<!-- #       data = crime_data, -->
+<!-- #       formula.no.offset, -->
+<!-- #       lat = "Y", -->
+<!-- #       long = "X", -->
+<!-- #       globalmin = TRUE, -->
+<!-- #       method = "adaptive_bsq", -->
+<!-- #       model = "negbin", -->
+<!-- #       bandwidth = "cv", -->
+<!-- #       force = TRUE, -->
+<!-- #       ) -->
+<!-- # the output is 262 feet -->
+
+
+<!-- #try smaller dataset -->
+
+<!--  #Fit the GWNBR model -->
+<!--  model.gwr.nb <- gwzinbr( -->
+<!--    data = crime_data, -->
+<!--    formula = formula.no.offset, -->
+<!--    lat = "Y", -->
+<!--    long = "X", -->
+<!--    model = "negbin", -->
+<!--    method = "adaptive_bsq", -->
+<!--    h=262, -->
+<!--    force=TRUE -->
+<!--  ) -->
+
+<!-- ## Bandwidth -->
+<!-- model.gwr.nb$bandwidth -->
+
+<!-- ## Goodness of fit measures -->
+<!-- model.gwr.nb$measures -->
+
+<!-- ``` -->
+
+
+
+#CAR NB-based modeling in a Bayesian environment
+# NOT APPLICABLE
+
+
+# ```{r CAR NB-based, echo = TRUE}
+# 
+# # The input should not be a sf object
+# crime_data_no_geometry <- st_drop_geometry(crime_data)
+# 
+# # Fit the negative binomial spatial GLM
+# model.CAR.nb <- glmmfields(formula.no.offset,
+#                     data = crime_data_no_geometry,
+#                     lat = "Y",
+#                     lon = "X",
+#                     family = nbinom2(link = "log"),
+#                     offset = crime_data_no_geometry$area_acre_logged,
+#                     verbose = TRUE
+#                     );model.CAR.nb
+# ```
+
+
+
+
+# GLM Poisson-based modeling and model diagnostics
+
+# ```{r GLM Poisson-based, echo = TRUE}
+# poisson.glm <- glm(formula, family = poisson, data = crime_data);summary(poisson.glm)
+# 
+# # capturing the R-squared values
+# rsq_value <- rsq(poisson.glm, adj = TRUE);print(rsq_value)
+# 
+# #checking the overdispersion
+# check_overdispersion(poisson.glm) # method1
+# 
+# #Model diagnostics
+# residuals_nb <- residuals(poisson.glm, type = "pearson")
+# moran_test <- moran.test(residuals_nb, data_listw);print(moran_test) # Moran's test on dependent variable
+# lm_test <- lm.morantest(poisson.glm, listw = data_listw);print(lm_test) # Moran's test on residuals
+# bptest(poisson.glm) # Breusch-Pagan test for heteroscedasticity
+# wald_test <- wald.test(b = coef(poisson.glm), Sigma = vcov(poisson.glm), Terms = 2:length(coef(poisson.glm)));print(wald_test) #Wald test #Terms argument checks all coefficients except the intercept
+# lag_error_test <- lm.RStests(poisson.glm, data_listw, test = "all");print(lag_error_test) # Perform the LM tests for spatial dependence
+# ```
+
+
+# CAR Poisson-based modeling in a Bayesian environment
+#Model 1
+
+# ```{r CAR Poisson-based model 1, echo = TRUE}
+# 
+# fit <- stan_car(
+#   formula = formula,
+#   data = crime_data,
+#   C = adj_matrix,
+#   family = poisson(),
+#   chains = 4, iter = 2000
+# )
+# 
+# print(fit)
+# print(plot(fit))
+# print(sp_diag(y = fit, shape = crime_data))
+# 
+# ```
+
+# CAR Poisson-based modeling in a Bayesian environment
+#Model 2
+
+# ```{r CAR Poisson-based model 2, echo = TRUE}
+# 
+# 
+# # Fit the CAR model using INLA with Poisson likelihood
+# model_inla <- CAR_INLA(carto = crime_data, ID.area = "id", O = "crime.count", E = "area_acre_logged", X = independent_vars, model = "global", n.sample = 10000)
+# 
+# residuals(model_inla)
+# 
+# summary(model_inla)
+# 
+# ```
+
+
+# GWR Poisson-based modeling and model diagnostics
+
+# ```{r GWR Poisson-based, echo = TRUE}
+# 
+# DM <- gw.dist(dp.locat = coords_crime_data)
+# bandwidth <- bw.ggwr(formula,data = crime_data, dMat =DM,family="poisson")
+# 
+# gwpr_model <- ggwr.basic(formula, data = crime_data,dMat = DM, bw = bandwidth, family = "poisson")
+# 
+# gwpr_model
+# 
+# # Deviance
+# deviance_value <- gwpr_model$GW.diagnostic$gw.deviance
+# cat("Deviance: ", deviance_value)
+# 
+# summary(gwpr_model) # Checking the summary of the model
+# ```
+
