@@ -72,7 +72,8 @@ required_packages <- c(
   "zoo",         # Time series
   "RcmdrMisc",   # Misc functions from R Commander
   "grid",        # Base R graphics layout
-  "gridExtra"    # Arrange multiple grid-based plots
+  "gridExtra",    # Arrange multiple grid-based plots
+  "here"
 )
 
 # Install any packages that are not yet installed
@@ -86,116 +87,83 @@ for (pkg in required_packages) {
 # Load all required libraries
 invisible(lapply(required_packages, library, character.only = TRUE))
 ```
+```{r userinput}
+
+crime_column <- "propcrimct"
+
+```
+
 
 #Data pre-processing
 
 ```{r processing,include=FALSE}
-crime_data <- st_read("../data/final_dataset/extracted") #Reading the main data frame
 
+# 1. Read main data
+original_data <- st_read(here("data", "final_dataset", "final_components.shp"))
 
-# adding crime count to the dataset and manipulating data
-data_additional <- st_read("../../data/QOL/Final_dataset.shp")
-data_additional <- data_additional %>%
-  dplyr::select(id, propcrimct, area_acre)
-geometry_factored <- st_geometry(crime_data)
-st_geometry(crime_data) <- NULL
-# Check if data_additional has geometry
-if ("geometry" %in% names(data_additional)) {
-  # Remove geometry
-  st_geometry(data_additional) <- NULL
-}
-data_additional <- data_additional %>%
-  dplyr::select(id, propcrimct, area_acre)
-data_combined <- crime_data %>%
+# 2. Read crime-related attribute + area and then drop geometry
+data_additional <- st_read(here("data", "neighborhoods", "neighborhoods.shp")) |>
+  mutate(
+    area = as.numeric(st_area(geometry))    # compute area from polygon geometry
+  ) |>
+  st_drop_geometry() |>
+  select(
+    id,
+    all_of(crime_column),
+    area
+  )
+
+# 3. Join attributes to main data
+original_data <- original_data |>
   left_join(data_additional, by = "id")
-crime_data <- st_as_sf(data_combined, geometry = geometry_factored)
-names(crime_data)[names(crime_data) == "propcrimct"] <- "crime.count"
-names(crime_data)[names(crime_data) == "property.c"] <- "crime.rate"
 
+# 4. Coordinates & neighbors matrix
+coords_original_data <- st_coordinates(st_centroid(original_data))
+original_data$X <- coords_original_data[, "X"]
+original_data$Y <- coords_original_data[, "Y"]
 
-
-#Extracting the coordinates and creating queens spatial matrix
-coords_crime_data <- st_coordinates(st_centroid(crime_data))
-crime_data$X <- coords_crime_data[, "X"]
-crime_data$Y <- coords_crime_data[, "Y"]
-
-data_nb <- poly2nb(crime_data, queen = TRUE)
-adj_matrix <- nb2mat(data_nb, style="B")
+data_nb <- poly2nb(original_data, queen = TRUE)
+adj_matrix <- nb2mat(data_nb, style = "B")
 row.names(adj_matrix) <- NULL
 data_listw <- nb2listw(data_nb, style = "W")
 
-#Log transformation of network measures
-crime_data$average.be_log <- log(crime_data$average.be + 1)
-crime_data$intersecti_log <- log(crime_data$intersecti+ 1)
-crime_data$average.cl_log <- log(crime_data$average.cl + 1)
-crime_data$average.sh_log <- log(crime_data$average.sh + 1)
+# 5. Log-transform network PCs
+original_data <- original_data |>
+  mutate(across(matches("^PC[0-9]+_net$"),
+                ~ log(.x + 1),    #LOG TRANSFORMATION + 1 is an issue here bc we have some original value smaller than -1.
+                .names = "{.col}_log")) |>
+  select(-matches("^PC[0-9]+_net$"))
 
-# Defining unique identifier for each feature
-crime_data$UID <- as.numeric(factor(crime_data$id))
+# 6. spatial lag
+original_data$spatial_lag <- lag.listw(data_listw, original_data[[crime_column]])
 
-# Create spatial lag of the dependent variable (crime.count)
-crime_data$spatial_lag <- lag.listw(data_listw, crime_data$crime.count)
-
-#Removing unnecessary object
-rm(data_additional)
-rm(data_combined)
-rm(geometry_factored)
-
-#Removing unneccessary Variables
-crime_data <- crime_data %>%
-  dplyr::select(-average.be,-intersecti, -average.cl, -average.sh)
-#Defining dependent and independent variables
+# 7. Define the models' parameters
 independent_vars <- c(
-  "average.be_log",
-  "intersecti_log",
-  "average.cl_log",
-  "average.sh_log",
-  "Factor_1", "Factor_2", 
-  "Factor_3", "Factor_4", 
-  "Factor_5", "Factor_6",
-  "Factor_7", "Factor_8",
-  "Factor_9"
+  names(original_data)[grepl("_log$", names(original_data))],
+  names(original_data)[grepl("^PC[0-9]+_ctrl$", names(original_data))]
 )
-dependent_var_name <- "crime.count"
 
-street_measures <- c("average.be_log", "intersecti_log", "average.cl_log", "average.sh_log")
+dependent_var <- crime_column
 
-# Prepare the model formula (with inclusion of the offset parameter)
-formula <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
-           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
-           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9 + offset(log(area_acre))
+formula_string <- paste0(
+  dependent_var, " ~ ",
+  paste(independent_vars, collapse = " + ")
+)
 
-crime_data$area_acre_logged <- log(crime_data$area_acre)
+# model with offset
+base.model <- as.formula(
+  paste0(formula_string, " + offset(log(area))")
+)
 
-formula.no.offset <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
-           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
-           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9
-
+# model without offset
+base.model.no.offset <- as.formula(formula_string)
 ```
-
-#Descriptive stats of Street network measures
-
-```{r Descriptive stats,include=FALSE}
-
-crime_data_df <- st_drop_geometry(crime_data)
-
-
-desc_stats <- psych::describe(crime_data_df[, street_measures])
-#View(desc_stats)
-
-rm(crime_data_df)
-
-#write.csv(desc_stats, "descriptive_statistics.csv", row.names = TRUE)
-
-```
-
-
 # Crime Count distribution type
 
 ```{r GLM NB-based, echo = TRUE}
 
-#Checking if "crime.count" follows Poisson dist or BN dist.
-var <- crime_data$crime.count
+#Checking if "crime.count" follows Poisson dist or Negative Binomial dist.
+var <- original_data$crime.count
 mean_var <- mean(var); var_var <- var(var)
 overidpersion.ratio <- var_var / mean_var; cat("Overdispersion ratio:",overidpersion.ratio)
 
@@ -218,7 +186,7 @@ if (dispersion > 1) {
 # GLM NB-based modeling and model diagnostics
 
 ```{r GLM NB-based, echo = TRUE}
-nb.glm <- glm.nb(formula, data = crime_data);summary(nb.glm)
+nb.glm <- glm.nb(formula, data = original_data);summary(nb.glm)
 
 # capturing the R-squared values
 rsq_value <- rsq(nb.glm, adj = TRUE);print(rsq_value)
@@ -230,7 +198,7 @@ check_overdispersion(nb.glm) # method1
 #Model diagnostics
 residuals_nb <- residuals(nb.glm, type = "pearson")
 #moran_test <- moran.test(residuals_nb, data_listw);print(moran_test) # Moran's test on residuals
-moran_test_dependent <- moran.test(crime_data$crime.count, data_listw);print(moran_test_dependent) # Moran's test on dependent variable
+moran_test_dependent <- moran.test(original_data$crime.count, data_listw);print(moran_test_dependent) # Moran's test on dependent variable
 lm_test <- lm.morantest(nb.glm, listw = data_listw);print(lm_test) # Moran's test on residuals
 bptest(nb.glm) # Breusch-Pagan test for heteroscedasticity
 wald_test <- wald.test(b = coef(nb.glm), Sigma = vcov(nb.glm), Terms = 2:length(coef(nb.glm)));print(wald_test) #Wald test #Terms argument checks all coefficients except the intercept
@@ -257,8 +225,8 @@ formula.m0.besag <- crime.count ~ average.be_log + intersecti_log + average.cl_l
 
 m0.besag  <- inla(formula.m0.besag,
             family = "nbinomial",
-            data = crime_data,
-            offset = crime_data$area_acre_logged,
+            data = original_data,
+            offset = original_data$area_acre_logged,
             control.predictor = list(compute = TRUE),
             control.compute = list(dic = TRUE, waic = TRUE),
             control.fixed = list(
@@ -391,7 +359,7 @@ data_listw_sparsed <- as(as_dgRMatrix_listw(data_listw), "CsparseMatrix")
 f1 <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
            average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
            Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9
-mmatrix <- model.matrix(f1, crime_data)
+mmatrix <- model.matrix(f1, original_data)
 
 
 ## Zero-variance for error term
@@ -441,8 +409,8 @@ formula.m0.spatial_lag <- crime.count ~ average.be_log + intersecti_log + averag
 m0.spatial_lag <- inla(
             formula.m0.spatial_lag,
             family = "nbinomial",
-            data = crime_data,
-            offset = crime_data$area_acre_logged,
+            data = original_data,
+            offset = original_data$area_acre_logged,
             control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
             verbose = inla.getOption("verbose")
 )
@@ -567,39 +535,39 @@ posterior_plot
 
 #Since there is no approach to find local p-values of coefficients, we need to standardize the formula and input it to the model, so the coefficients are comparable.
 
-# Standardizing the variables in crime_data
-crime_data_std <- crime_data  # Copy the original data
+# Standardizing the variables in original_data
+original_data_std <- original_data  # Copy the original data
 
 # Apply z-score standardization (excluding the offset term)
-crime_data_std$Factor_1 <- scale(crime_data_std$Factor_1)
-crime_data_std$Factor_2 <- scale(crime_data_std$Factor_2)
-crime_data_std$Factor_3 <- scale(crime_data_std$Factor_3)
-crime_data_std$Factor_4 <- scale(crime_data_std$Factor_4)
-crime_data_std$Factor_1 <- scale(crime_data_std$Factor_1)
-crime_data_std$Factor_5 <- scale(crime_data_std$Factor_5)
-crime_data_std$Factor_6 <- scale(crime_data_std$Factor_6)
-crime_data_std$Factor_7 <- scale(crime_data_std$Factor_7)
-crime_data_std$Factor_8 <- scale(crime_data_std$Factor_8)
-crime_data_std$Factor_9 <- scale(crime_data_std$Factor_9)
-crime_data_std$average.be_log <- scale(crime_data_std$average.be_log)
-crime_data_std$intersecti_log <- scale(crime_data_std$intersecti_log)
-crime_data_std$average.cl_log <- scale(crime_data_std$average.cl_log)
-crime_data_std$average.sh_log <- scale(crime_data_std$average.sh_log)
-crime_data_std$crime.count <- scale(crime_data_std$crime.count)
+original_data_std$Factor_1 <- scale(original_data_std$Factor_1)
+original_data_std$Factor_2 <- scale(original_data_std$Factor_2)
+original_data_std$Factor_3 <- scale(original_data_std$Factor_3)
+original_data_std$Factor_4 <- scale(original_data_std$Factor_4)
+original_data_std$Factor_1 <- scale(original_data_std$Factor_1)
+original_data_std$Factor_5 <- scale(original_data_std$Factor_5)
+original_data_std$Factor_6 <- scale(original_data_std$Factor_6)
+original_data_std$Factor_7 <- scale(original_data_std$Factor_7)
+original_data_std$Factor_8 <- scale(original_data_std$Factor_8)
+original_data_std$Factor_9 <- scale(original_data_std$Factor_9)
+original_data_std$average.be_log <- scale(original_data_std$average.be_log)
+original_data_std$intersecti_log <- scale(original_data_std$intersecti_log)
+original_data_std$average.cl_log <- scale(original_data_std$average.cl_log)
+original_data_std$average.sh_log <- scale(original_data_std$average.sh_log)
+original_data_std$crime.count <- scale(original_data_std$crime.count)
 
-View(crime_data_std)
+View(original_data_std)
 
 
 
 # #Select bandwidth using cross-validation
-# bandwidth <- ggwr.sel(formula, data = crime_data_std,
+# bandwidth <- ggwr.sel(formula, data = original_data_std,
 #                       #adapt = TRUE,
-#                       coords = coords_crime_data, family = negative.binomial(2.702), verbose = TRUE)
+#                       coords = coords_original_data, family = negative.binomial(2.702), verbose = TRUE)
 
 # # Perform the Geographically Weighted Poisson Regression
 # gwr_model <- ggwr(formula,
-#                   data = crime_data_std,
-#                   coords = coords_crime_data,
+#                   data = original_data_std,
+#                   coords = coords_original_data,
 #                   bandwidth = 33776.24, #bandwidth selected in the formula above.
 #                   family = negative.binomial(2.702),
 #                   type = "response"
@@ -646,9 +614,9 @@ print(aic)
 
 ```{r GWR NB-based , echo = TRUE}
 
-crime_data_temp <- as(crime_data, "Spatial")
+original_data_temp <- as(original_data, "Spatial")
 
-gwr_model_local <- gw.cov(crime_data_temp,vars = independent_vars,bw = 33776.24, cor = FALSE)
+gwr_model_local <- gw.cov(original_data_temp,vars = independent_vars,bw = 33776.24, cor = FALSE)
 
 
 # Add p-values and z-scores to the SDF data
@@ -666,7 +634,7 @@ for (i in 1:length(predictor_names)) {
 
   gwr_model_local$SDF@data[, paste0("z_value.", predictor_names[i])] <- z_value
 
-  #df <- nrow(crime_data) - length(street_measures) - 1  
+  #df <- nrow(original_data) - length(street_measures) - 1  
   df <- 316.9343 #found in arcgis
   p_values <- round(2 * (1 - pt(abs(z_value),df)), 6)
 
@@ -678,10 +646,10 @@ gwr_model_local$SDF@data <- gwr_model_local$SDF@data %>%
   dplyr::select(-starts_with("cov."))
 
 
-crime_data_final <- cbind(crime_data, gwr_model_local$SDF@data)
+original_data_final <- cbind(original_data, gwr_model_local$SDF@data)
 
 # View the updated SDF data with p-values and z-values
-View(crime_data_final)
+View(original_data_final)
 
 ```
 
@@ -704,10 +672,10 @@ for (var in street_measures) {
   # Compute Standard Deviation of Deviance Residuals
   sd_resid <- sd(response_resids, na.rm = TRUE)
   
-  df <- nrow(crime_data) - length(street_measures) - 1  # Adjusting for predictors & intercept
+  df <- nrow(original_data) - length(street_measures) - 1  # Adjusting for predictors & intercept
   
   # Compute Standard Error (SE) for the local coefficient
-  se <- sd_dev_resid / sqrt(nrow(crime_data))
+  se <- sd_dev_resid / sqrt(nrow(original_data))
 
   # Compute pseudo-t statistic
   pseudo_t <- local_coef / se
@@ -729,9 +697,9 @@ for (var in street_measures) {
   }
 }
 
-crime_data_final <- cbind(crime_data, final_results_df)
-View(crime_data_final)
-#st_write(crime_data_final, "../GWR_NB_in_R.shp", delete_dsn = TRUE)
+original_data_final <- cbind(original_data, final_results_df)
+View(original_data_final)
+#st_write(original_data_final, "../GWR_NB_in_R.shp", delete_dsn = TRUE)
 
 ```
 
@@ -741,15 +709,15 @@ View(crime_data_final)
 SS_DevResid <- sum(deviance_resids^2)
 
 # Calculate Total Sum of Squares (TSS)
-y_mean <- mean(crime_data$crime.count)
-TSS <- sum((crime_data$crime.count - y_mean)^2)
+y_mean <- mean(original_data$crime.count)
+TSS <- sum((original_data$crime.count - y_mean)^2)
 
 # Compute Pseudo R^2
 pseudo_R2 <- 1 - (SS_DevResid / TSS)
 pseudo_R2
 
 # Number of observations
-n <- nrow(crime_data)
+n <- nrow(original_data)
 
 # Number of predictors (excluding intercept)
 k <- length(gwr_model$SDF) - 2  # Subtracting intercept and sum.w
@@ -770,7 +738,7 @@ adj_pseudo_R2
 
 
 <!-- # Golden( -->
-<!-- #       data = crime_data, -->
+<!-- #       data = original_data, -->
 <!-- #       formula.no.offset, -->
 <!-- #       lat = "Y", -->
 <!-- #       long = "X", -->
@@ -787,7 +755,7 @@ adj_pseudo_R2
 
 <!--  #Fit the GWNBR model -->
 <!--  model.gwr.nb <- gwzinbr( -->
-<!--    data = crime_data, -->
+<!--    data = original_data, -->
 <!--    formula = formula.no.offset, -->
 <!--    lat = "Y", -->
 <!--    long = "X", -->
@@ -814,15 +782,15 @@ adj_pseudo_R2
 # ```{r CAR NB-based, echo = TRUE}
 # 
 # # The input should not be a sf object
-# crime_data_no_geometry <- st_drop_geometry(crime_data)
+# original_data_no_geometry <- st_drop_geometry(original_data)
 # 
 # # Fit the negative binomial spatial GLM
 # model.CAR.nb <- glmmfields(formula.no.offset,
-#                     data = crime_data_no_geometry,
+#                     data = original_data_no_geometry,
 #                     lat = "Y",
 #                     lon = "X",
 #                     family = nbinom2(link = "log"),
-#                     offset = crime_data_no_geometry$area_acre_logged,
+#                     offset = original_data_no_geometry$area_acre_logged,
 #                     verbose = TRUE
 #                     );model.CAR.nb
 # ```
@@ -833,7 +801,7 @@ adj_pseudo_R2
 # GLM Poisson-based modeling and model diagnostics
 
 # ```{r GLM Poisson-based, echo = TRUE}
-# poisson.glm <- glm(formula, family = poisson, data = crime_data);summary(poisson.glm)
+# poisson.glm <- glm(formula, family = poisson, data = original_data);summary(poisson.glm)
 # 
 # # capturing the R-squared values
 # rsq_value <- rsq(poisson.glm, adj = TRUE);print(rsq_value)
@@ -858,7 +826,7 @@ adj_pseudo_R2
 # 
 # fit <- stan_car(
 #   formula = formula,
-#   data = crime_data,
+#   data = original_data,
 #   C = adj_matrix,
 #   family = poisson(),
 #   chains = 4, iter = 2000
@@ -866,7 +834,7 @@ adj_pseudo_R2
 # 
 # print(fit)
 # print(plot(fit))
-# print(sp_diag(y = fit, shape = crime_data))
+# print(sp_diag(y = fit, shape = original_data))
 # 
 # ```
 
@@ -877,7 +845,7 @@ adj_pseudo_R2
 # 
 # 
 # # Fit the CAR model using INLA with Poisson likelihood
-# model_inla <- CAR_INLA(carto = crime_data, ID.area = "id", O = "crime.count", E = "area_acre_logged", X = independent_vars, model = "global", n.sample = 10000)
+# model_inla <- CAR_INLA(carto = original_data, ID.area = "id", O = "crime.count", E = "area_acre_logged", X = independent_vars, model = "global", n.sample = 10000)
 # 
 # residuals(model_inla)
 # 
@@ -890,10 +858,10 @@ adj_pseudo_R2
 
 # ```{r GWR Poisson-based, echo = TRUE}
 # 
-# DM <- gw.dist(dp.locat = coords_crime_data)
-# bandwidth <- bw.ggwr(formula,data = crime_data, dMat =DM,family="poisson")
+# DM <- gw.dist(dp.locat = coords_original_data)
+# bandwidth <- bw.ggwr(formula,data = original_data, dMat =DM,family="poisson")
 # 
-# gwpr_model <- ggwr.basic(formula, data = crime_data,dMat = DM, bw = bandwidth, family = "poisson")
+# gwpr_model <- ggwr.basic(formula, data = original_data,dMat = DM, bw = bandwidth, family = "poisson")
 # 
 # gwpr_model
 # 

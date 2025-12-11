@@ -1,9 +1,6 @@
-import matplotlib.pyplot as plt,seaborn as sns
+import pandas as pd, numpy as np, matplotlib.pyplot as plt,seaborn as sns
 from sklearn.preprocessing import StandardScaler
 from factor_analyzer import FactorAnalyzer
-
-
-
 
 
 def factor_loading_matrices(
