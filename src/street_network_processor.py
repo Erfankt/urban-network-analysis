@@ -397,6 +397,6 @@ class StreetNetworkProcessor:
         for _, df in results.items():
             npa_merged = npa_merged.merge(df, on='id', how='left')
 
-        final_path = os.path.join(os.path.dirname(self.NPA_shape_path), "Final_dataset.shp")
+        final_path = os.path.join("../data/final_dataset", "extracted_measures.shp")
         npa_merged.to_file(final_path)
         print("\nFinal analytical base table (Final_dataset.shp) created successfully!")

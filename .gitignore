@@ -5,6 +5,15 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.qix
+*.sbn
+*.sbx
+*.shp.xml
 
 # ============================================
 # IDEs
@@ -19,6 +28,6 @@ __pycache__/
 Thumbs.db
 
 # ============================================
-# Data Output (you can adjust)
+# Data Output
 # ============================================
 data/processed/
