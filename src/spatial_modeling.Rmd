@@ -89,7 +89,8 @@ invisible(lapply(required_packages, library, character.only = TRUE))
 ```
 ```{r userinput}
 
-crime_column <- "propcrimct"
+crime_column <- "propcrimct"                                  # Specify the crime variable used in the analysis
+
 
 ```
 
@@ -98,111 +99,84 @@ crime_column <- "propcrimct"
 
 ```{r processing,include=FALSE}
 
-# 1. Read main data
-original_data <- st_read(here("data", "final_dataset", "final_components.shp"))
+# 1. Read data
+original_data <- st_read(here("data/final_dataset/final_components.shp"))
 
-# 2. Read crime-related attribute + area and then drop geometry
-data_additional <- st_read(here("data", "neighborhoods", "neighborhoods.shp")) |>
-  mutate(
-    area = as.numeric(st_area(geometry))    # compute area from polygon geometry
-  ) |>
+data_additional <- st_read(here("data/neighborhoods/neighborhoods.shp")) |>
+  mutate(area = as.numeric(st_area(geometry))) |>
   st_drop_geometry() |>
-  select(
-    id,
-    all_of(crime_column),
-    area
-  )
+  select(id, all_of(crime_column), area)
 
-# 3. Join attributes to main data
+# 2. Join attributes
 original_data <- original_data |>
   left_join(data_additional, by = "id")
 
-# 4. Coordinates & neighbors matrix
-coords_original_data <- st_coordinates(st_centroid(original_data))
-original_data$X <- coords_original_data[, "X"]
-original_data$Y <- coords_original_data[, "Y"]
+# 3. Coordinates & neighbors
+coords <- st_coordinates(st_centroid(original_data))
+original_data$X <- coords[,1]
+original_data$Y <- coords[,2]
 
-data_nb <- poly2nb(original_data, queen = TRUE)
-adj_matrix <- nb2mat(data_nb, style = "B")
-row.names(adj_matrix) <- NULL
-data_listw <- nb2listw(data_nb, style = "W")
+nb <- poly2nb(original_data, queen = TRUE)
+lw <- nb2listw(nb, style = "W")
 
-# 5. Log-transform network PCs
+# 4. Log-transform network PCs
 original_data <- original_data |>
-  mutate(across(matches("^PC[0-9]+_net$"),
-                ~ log(.x + 1),    #LOG TRANSFORMATION + 1 is an issue here bc we have some original value smaller than -1.
-                .names = "{.col}_log")) |>
+  mutate(
+    across(matches("^PC[0-9]+_net$"), ~ log(.x + 1), .names = "{.col}_log")
+  ) |>
   select(-matches("^PC[0-9]+_net$"))
 
-# 6. spatial lag
-original_data$spatial_lag <- lag.listw(data_listw, original_data[[crime_column]])
+# 5. Spatial lag of crime
+original_data$spatial_lag <- lag.listw(lw, original_data[[crime_column]])
 
-# 7. Define the models' parameters
+# 6. Model formulas
 independent_vars <- c(
-  names(original_data)[grepl("_log$", names(original_data))],
-  names(original_data)[grepl("^PC[0-9]+_ctrl$", names(original_data))]
+  grep("_log$", names(original_data), value = TRUE),
+  grep("^PC[0-9]+_ctrl$", names(original_data), value = TRUE)
 )
 
-dependent_var <- crime_column
+formula_string <- paste(crime_column, "~", paste(independent_vars, collapse = " + "))
 
-formula_string <- paste0(
-  dependent_var, " ~ ",
-  paste(independent_vars, collapse = " + ")
-)
-
-# model with offset
-base.model <- as.formula(
-  paste0(formula_string, " + offset(log(area))")
-)
-
-# model without offset
+base.model          <- as.formula(paste0(formula_string, " + offset(log(area))"))
 base.model.no.offset <- as.formula(formula_string)
+
 ```
 # Crime Count distribution type
 
-```{r GLM NB-based, echo = TRUE}
+```{r overdispersion test, echo = TRUE}
 
-#Checking if "crime.count" follows Poisson dist or Negative Binomial dist.
-var <- original_data$crime.count
-mean_var <- mean(var); var_var <- var(var)
-overidpersion.ratio <- var_var / mean_var; cat("Overdispersion ratio:",overidpersion.ratio)
+var <- original_data[[crime_column]]
+m <- mean(var); v <- var(var)
+cat("Overdispersion ratio:", v/m, "\n")
 
-# Check if mean and variance are approximately equal
-if (abs(mean_var - var_var) < 0.05 * mean_var) {
-  print("The mean and variance are approximately equal, which is a characteristic of a Poisson distribution.")
+if (abs(m - v) < 0.05*m) {
+  print("Mean ≈ variance → Poisson likely.")
 } else {
-  print("The mean and variance are not equal, which may suggest the data does not follow a Poisson distribution.")
+  print("Mean ≠ variance → Poisson unlikely.")
 }
 
-dispersion <- var_var / mean_var # Check dispersion
-if (dispersion > 1) {
-  print("The data shows overdispersion, which is characteristic of a Negative Binomial distribution.")
+if (v/m > 1) {
+  print("Overdispersion detected → Negative Binomial appropriate.")
 } else {
-  print("The data does not show overdispersion; the Negative Binomial distribution might not be appropriate.")
+  print("No overdispersion → NB may not be appropriate.")
 }
+
 ```
-
-
 # GLM NB-based modeling and model diagnostics
 
 ```{r GLM NB-based, echo = TRUE}
-nb.glm <- glm.nb(formula, data = original_data);summary(nb.glm)
+nb.glm <- glm.nb(base.model, data = original_data); summary(nb.glm)# NB GLM
+print(rsq(nb.glm, adj = TRUE))                                     # R²
+check_overdispersion(nb.glm)                                       # Overdispersion
 
-# capturing the R-squared values
-rsq_value <- rsq(nb.glm, adj = TRUE);print(rsq_value)
-
-
-#checking the overdispersion
-check_overdispersion(nb.glm) # method1
-
-#Model diagnostics
-residuals_nb <- residuals(nb.glm, type = "pearson")
-#moran_test <- moran.test(residuals_nb, data_listw);print(moran_test) # Moran's test on residuals
-moran_test_dependent <- moran.test(original_data$crime.count, data_listw);print(moran_test_dependent) # Moran's test on dependent variable
-lm_test <- lm.morantest(nb.glm, listw = data_listw);print(lm_test) # Moran's test on residuals
-bptest(nb.glm) # Breusch-Pagan test for heteroscedasticity
-wald_test <- wald.test(b = coef(nb.glm), Sigma = vcov(nb.glm), Terms = 2:length(coef(nb.glm)));print(wald_test) #Wald test #Terms argument checks all coefficients except the intercept
-lag_error_test <- lm.RStests(nb.glm, data_listw, test = "all");print(lag_error_test) # Perform the LM tests for spatial dependence
+# Diagnostics
+res.nb <- residuals(nb.glm, type = "pearson")
+print(moran.test(original_data[[crime_column]], lw))               # Moran on dependent
+print(lm.morantest(nb.glm, listw = lw))                            # Moran on residuals
+bptest(nb.glm)                                                     # BP heteroscedasticity
+print(wald.test(b = coef(nb.glm), Sigma = vcov(nb.glm),
+                Terms = 2:length(coef(nb.glm))))                  # Wald test
+print(lm.RStests(nb.glm, lw, test = "all"))                       # LM spatial dependence tests
 ```
 
 
@@ -210,319 +184,385 @@ lag_error_test <- lm.RStests(nb.glm, data_listw, test = "all");print(lag_error_t
 
 ```{r CAR NB-based, echo = TRUE}
 
+# 1. Create a UID for INLA
+original_data$UID <- 1:nrow(original_data)
 
-#Log-Poisson regression with random effects
-formula.m0.besag <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
-           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
-           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9 +
-           f(UID,
-             model = "besag",
-             graph = adj_matrix,
-             hyper = list(prec = list(prior = "loggamma", param = c(1, 0.01)))
-             )  # This is spatial random effect (accounting for CAR)
+# 2. Build adjacency graph in INLA format
+nb <- poly2nb(original_data)
+nb_inla <- nb2INLA("adjacency.adj", nb)   # Creates adjacency.adj file
 
+# 3. Negative binomial CAR formula
+formula.car.nb <- propcrimct ~
+  PC1_net_log + PC2_net_log + PC3_net_log + PC4_net_log +
+  PC1_ctrl + PC2_ctrl +
+  f(UID,
+    model = "besag",
+    graph = "adjacency.adj",
+    scale.model = TRUE,
+    hyper = list(
+      prec = list(prior = "loggamma", param = c(1, 0.01))
+    )
+  )
 
+# 4. Fit INLA NB model
+m.car.nb <- inla(
+  formula.car.nb,
+  family = "nbinomial",
+  data = original_data,
+  offset = log(original_data$area),
+  control.predictor = list(compute = TRUE),
+  control.compute = list(dic = TRUE, waic = TRUE),
+  verbose = TRUE
+)
 
-m0.besag  <- inla(formula.m0.besag,
-            family = "nbinomial",
-            data = original_data,
-            offset = original_data$area_acre_logged,
-            control.predictor = list(compute = TRUE),
-            control.compute = list(dic = TRUE, waic = TRUE),
-            control.fixed = list(
-                mean = 0,      # Prior mean for fixed effects
-                prec = 0.01    # Precision (1/variance) for fixed effects
-            ),
-            verbose = inla.getOption("verbose")
-            );summary(m0.besag)
-
+summary(m.car.nb)
 ```
 
 #CAR NB-based model analysis
 
 ```{r CAR NB-based analysis , echo = TRUE}
 
-# Extract marginal distribution for 'average.be_log' from CAR model
-average_be_log_marginal <- m0.besag$marginals.fixed$average.sh_log
+# -----------------------------------------------
+# 0. Select the variable you want to analyze
+# -----------------------------------------------
 
-# Compute posterior probabilities
-prob_negative <- inla.pmarginal(0, average_be_log_marginal)
+target_var <- "average.be_log"   # CHANGE HERE if analyzing another variable
+
+# Check if variable exists in INLA output
+if (!target_var %in% names(m0.besag$marginals.fixed)) {
+    stop(paste0("Variable '", target_var, "' not found in m0.besag$marginals.fixed."))
+}
+
+# Extract marginal distribution for the selected variable
+marginal <- m0.besag$marginals.fixed[[target_var]]
+
+# Ensure it is a proper dataframe
+marg_df <- as.data.frame(marginal)
+colnames(marg_df) <- c("x", "density")
+
+# -----------------------------------------------
+# 1. Posterior summaries
+# -----------------------------------------------
+
+# Probability(beta < 0)
+prob_negative <- inla.pmarginal(0, marginal)
+
+# Probability(beta > 0)
 prob_positive <- 1 - prob_negative
 
-# Compute posterior mean and SD
-mean_be_log <- inla.emarginal(function(x) x, average_be_log_marginal)
-var_be_log <- inla.emarginal(function(x) x^2, average_be_log_marginal) - mean_be_log^2
-sd_be_log <- sqrt(var_be_log)
+# Posterior mean
+mean_beta <- inla.emarginal(function(x) x, marginal)
 
-# Convert marginal to dataframe
-average_be_log_df <- data.frame(
-  x = average_be_log_marginal[, 1],
-  density = average_be_log_marginal[, 2]
-)
+# Posterior SD
+var_beta <- inla.emarginal(function(x) x^2, marginal) - mean_beta^2
+sd_beta <- sqrt(var_beta)
 
-# Split for red and blue shading
-df_negative <- average_be_log_df %>% filter(x < 0)
-df_positive <- average_be_log_df %>% filter(x >= 0)
+# -----------------------------------------------
+# 2. Data for shaded regions
+# -----------------------------------------------
+df_negative <- subset(marg_df, x < 0)
+df_positive <- subset(marg_df, x >= 0)
 
-# Compute percentiles (every 5%)
+# -----------------------------------------------
+# 3. Percentiles
+# -----------------------------------------------
+
 percentiles <- seq(0.05, 0.95, by = 0.05)
-percentile_values <- sapply(percentiles, function(p) inla.qmarginal(p, average_be_log_marginal))
-percentile_table <- data.frame(
-  Percentile = paste0(percentiles * 100, "%"),
-  Value = round(percentile_values, 4)
+percentile_values <- sapply(percentiles, function(p)
+    inla.qmarginal(p, marginal)
 )
 
-# Create plot
-posterior_plot <- ggplot() +
-  geom_area(data = df_negative, aes(x = x, y = density), fill = "red", alpha = 0.4) +
-  geom_area(data = df_positive, aes(x = x, y = density), fill = "blue", alpha = 0.4) +
-  geom_line(data = average_be_log_df, aes(x = x, y = density), size = 1.2, color = "black") +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "darkred", size = 0.8) +
-  geom_vline(xintercept = mean_be_log, linetype = "solid", color = "blue", size = 1.2) +
-  geom_vline(xintercept = mean_be_log + sd_be_log, linetype = "dotted", color = "darkblue", size = 1) +
-  geom_vline(xintercept = mean_be_log - sd_be_log, linetype = "dotted", color = "darkblue", size = 1) +
+percentile_table <- data.frame(
+    Percentile = paste0(percentiles * 100, "%"),
+    Value = round(percentile_values, 4)
+)
 
-  # Probability labels with corresponding colors
+# -----------------------------------------------
+# 4. Plot
+# -----------------------------------------------
+
+posterior_plot <- ggplot() +
+  geom_area(data = df_negative, aes(x = x, y = density),
+            fill = "red", alpha = 0.4) +
+  geom_area(data = df_positive, aes(x = x, y = density),
+            fill = "blue", alpha = 0.4) +
+  geom_line(data = marg_df, aes(x = x, y = density),
+            size = 1.2, color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed",
+             color = "darkred", size = 0.8) +
+  geom_vline(xintercept = mean_beta, linetype = "solid",
+             color = "blue", size = 1.2) +
+  geom_vline(xintercept = mean_beta + sd_beta, linetype = "dotted",
+             color = "darkblue", size = 1) +
+  geom_vline(xintercept = mean_beta - sd_beta, linetype = "dotted",
+             color = "darkblue", size = 1) +
+
   annotate("text",
-           x = max(average_be_log_df$x) - 0.1,
-           y = max(average_be_log_df$density) * 1.05,
+           x = max(marg_df$x) - 0.1,
+           y = max(marg_df$density) * 1.05,
            label = paste0("Negative Probability: ", round(prob_negative, 3)),
            color = "red", size = 4, hjust = 1, fontface = "italic") +
 
   annotate("text",
-           x = max(average_be_log_df$x) - 0.1,
-           y = max(average_be_log_df$density) * 0.95,
+           x = max(marg_df$x) - 0.1,
+           y = max(marg_df$density) * 0.95,
            label = paste0("Positive Probability: ", round(prob_positive, 3)),
            color = "blue", size = 4, hjust = 1, fontface = "italic") +
 
-  # Mean and SD labels
-  annotate("text", x = mean_be_log, y = max(average_be_log_df$density) * 0.85,
-           label = "Mean", color = "blue", angle = 90, vjust = -0.4, size = 4) +
-  annotate("text", x = mean_be_log + sd_be_log, y = max(average_be_log_df$density) * 0.75,
-           label = "+1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
-  annotate("text", x = mean_be_log - sd_be_log, y = max(average_be_log_df$density) * 0.75,
-           label = "−1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text",
+           x = mean_beta,
+           y = max(marg_df$density) * 0.85,
+           label = "Mean",
+           color = "blue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text",
+           x = mean_beta + sd_beta,
+           y = max(marg_df$density) * 0.75,
+           label = "+1 SD",
+           color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text",
+           x = mean_beta - sd_beta,
+           y = max(marg_df$density) * 0.75,
+           label = "−1 SD",
+           color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
 
-  labs(x = "Effect Size", y = "Posterior Density") +
-  scale_x_continuous(
-    breaks = seq(floor(min(average_be_log_df$x)), ceiling(max(average_be_log_df$x)), by = 1),
-    labels = function(x) gsub("-", "\u2212", x)
+  labs(
+    x = paste0("Effect Size: ", target_var),
+    y = "Posterior Density"
   ) +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 8)) +
-  theme(
-    panel.background = element_rect(fill = "white", color = NA),
-    plot.background = element_rect(fill = "white", color = NA),
-    panel.grid.major = element_line(color = "grey85"),
-    panel.grid.minor = element_line(color = "grey90", size = 0.1),
-    axis.title.x = element_text(size = 10, face = "plain"),
-    axis.title.y = element_text(size = 10, face = "plain"),
-    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
-    plot.title = element_blank()
-  )
-# Export everything to PDF
-pdf("average_be_log_CAR_output.pdf", width = 8, height = 10)
-
-# 1. Plot
-print(posterior_plot)
-
-# 2. Marginal table
-grid.newpage()
-grid.text("Posterior Marginal Distribution (first 20 rows)", y = 0.95,
-          gp = gpar(fontsize = 12, fontface = "bold"))
-grid.draw(tableGrob(head(average_be_log_df, 20)))
-
-# 3. Percentile table
-grid.newpage()
-grid.text("Posterior Percentiles (5% increments)", y = 0.95,
-          gp = gpar(fontsize = 12, fontface = "bold"))
-grid.draw(tableGrob(percentile_table))
-
-dev.off()
-
-posterior_plot
+  theme_minimal(base_size = 12)
 
 ```
-
-
 
 
 #SAR NB-based modeling in a Bayesian environment
 
 ```{r SAR NB-based, echo = TRUE}
 
+# -----------------------------
+# 0. Rename for consistency
+# -----------------------------
+crime_var <- crime_column      # = "propcrimct"
+W_listw   <- lw                # spatial weights object
+area_log  <- log(original_data$area)   # earlier you used offset(log(area))
 
-## Sparsing data_listw
-data_listw_sparsed <- as(as_dgRMatrix_listw(data_listw), "CsparseMatrix")
+# Ensure UID exists
+if (!"UID" %in% names(original_data)) {
+  original_data$UID <- seq_len(nrow(original_data))
+}
 
+# -----------------------------
+# 1. Sparse W matrix for INLA
+# -----------------------------
+W_sparse <- as(as_dgRMatrix_listw(W_listw), "CsparseMatrix")
 
-## Model definition
-f1 <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
-           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
-           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9
-mmatrix <- model.matrix(f1, original_data)
-
-
-## Zero-variance for error term
-zero.variance = list(prec=list(initial = 25, fixed=TRUE))
-
-## Compute eigenvalues for SLM model, used to obtain rho.min and
-## rho.max
-e <- eigenw(data_listw)
-re.idx <- which(abs(Im(e)) < 1e-6)
-rho.max <- 1 / max(Re(e[re.idx]))
-rho.min <- 1 / min(Re(e[re.idx]))
-
-## Precision matrix for beta coeffients’ prior
-betaprec <- 1
-Q.beta = Diagonal(n=ncol(mmatrix), betaprec)
-
-## Priors on the hyperparameters
-hyper = list(
-             prec = list(
-                prior = "loggamma",
-                param = c(0.1, 0.1)
-                        ),
-             rho = list(
-                initial=0,
-                prior = "logitbeta",
-                param = c(1,1)
-                        )
-             )
-
-
-
-# Define spatial lag model for spatial effects
-formula.m0.spatial_lag <- crime.count ~ average.be_log + intersecti_log + average.cl_log + 
-                           average.sh_log + Factor_1 + Factor_2 + Factor_3 + Factor_4 + 
-                           Factor_5 + Factor_6 + Factor_7 + Factor_8 + Factor_9 +
-                              f(UID,
-                                model="slm",
-                                args.slm=list(
-                                rho.min = rho.min,
-                                rho.max = rho.max,
-                                W=data_listw_sparsed,
-                                X=mmatrix,
-                                Q.beta=Q.beta),
-                                hyper=hyper)
-
-# Fit the model
-m0.spatial_lag <- inla(
-            formula.m0.spatial_lag,
-            family = "nbinomial",
-            data = original_data,
-            offset = original_data$area_acre_logged,
-            control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
-            verbose = inla.getOption("verbose")
+# -----------------------------
+# 2. Formula (must match your variable names)
+# -----------------------------
+f1 <- as.formula(
+  paste(
+    crime_var,
+    "~",
+    paste(
+      c(
+        "average.be_log",
+        "intersecti_log",
+        "average.cl_log",
+        "average.sh_log",
+        paste0("Factor_", 1:9)
+      ),
+      collapse = " + "
+    )
+  )
 )
 
-# Summary of the model
-summary(m0.spatial_lag)
+mmatrix <- model.matrix(f1, original_data)
 
+# -----------------------------
+# 3. Eigenvalues for SLM bounds
+# -----------------------------
+e_vals <- eigenw(W_listw)
+e_real <- Re(e_vals[abs(Im(e_vals)) < 1e-6])
 
-## Re-scale rho to real scale
-rhomarg <- inla.tmarginal(function(x){rho.min+x*(rho.max-rho.min)},
-m0.spatial_lag$marginals.hyperpar[[2]])
-inla.zmarginal(rhomarg)
+rho.max <- 1 / max(e_real)
+rho.min <- 1 / min(e_real)
+
+# -----------------------------
+# 4. Priors for β coefficients
+# -----------------------------
+Q.beta <- Diagonal(n = ncol(mmatrix), x = 1)
+
+# Priors for precision + rho
+hyper <- list(
+  prec = list(prior = "loggamma", param = c(0.1, 0.1)),
+  rho  = list(initial = 0, prior = "logitbeta", param = c(1, 1))
+)
+
+# -----------------------------
+# 5. SLM latent field
+# -----------------------------
+formula.spatial_lag <- f1 +
+  f(
+    UID,
+    model = "slm",
+    args.slm = list(
+      rho.min = rho.min,
+      rho.max = rho.max,
+      W       = W_sparse,
+      X       = mmatrix,
+      Q.beta  = Q.beta
+    ),
+    hyper = hyper
+  )
+
+# -----------------------------
+# 6. Fit INLA SLM Negative Binomial
+# -----------------------------
+m.spatial_lag <- inla(
+  formula.spatial_lag,
+  family = "nbinomial",
+  data   = original_data,
+  offset = area_log,
+  control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
+  control.predictor = list(compute = TRUE),
+  verbose = inla.getOption("verbose")
+)
+
+summary(m.spatial_lag)
+
+# -----------------------------
+# 7. Extract the true-scale rho
+# -----------------------------
+rho_index <- grep("Rho", names(m.spatial_lag$marginals.hyperpar), ignore.case = TRUE)
+
+rho_marginal_rescaled <- inla.tmarginal(
+  function(x) rho.min + x * (rho.max - rho.min),
+  m.spatial_lag$marginals.hyperpar[[rho_index]]
+)
+
+inla.zmarginal(rho_marginal_rescaled)
+
 ```
 
 ```{r SAR NB-based model analysis_new, echo = TRUE}
 
-# Extract marginal distribution for 'average.be_log'
-average_be_log_marginal <- m0.spatial_lag$marginals.fixed$average.sh_log
+# -------------------------------
+# 0. Select variable to analyze
+# -------------------------------
+target_var <- "average.be_log"
 
-# See the structure
-average_be_log_marginal
+# Check if the variable exists in INLA output
+if (!target_var %in% names(m0.spatial_lag$marginals.fixed)) {
+    stop(paste0("Variable '", target_var, "' not found in m0.spatial_lag$marginals.fixed."))
+}
 
-# Probability that the coefficient is negative (x < 0)
-prob_negative <- inla.pmarginal(0, average_be_log_marginal)
+# Extract the marginal
+marginal <- m0.spatial_lag$marginals.fixed[[target_var]]
 
-# Probability that the coefficient is positive (x ≥ 0)
+# Convert marginal to dataframe (SAFE)
+marg_df <- as.data.frame(marginal)
+colnames(marg_df) <- c("x", "density")
+
+# -------------------------------
+# 1. Posterior summaries
+# -------------------------------
+
+# P(beta < 0)
+prob_negative <- inla.pmarginal(0, marginal)
+
+# P(beta ≥ 0)
 prob_positive <- 1 - prob_negative
 
-# Compute posterior mean and SD
-mean_be_log <- inla.emarginal(function(x) x, average_be_log_marginal)
-var_be_log <- inla.emarginal(function(x) x^2, average_be_log_marginal) - mean_be_log^2
-sd_be_log <- sqrt(var_be_log)
+# Posterior mean
+mean_beta <- inla.emarginal(function(x) x, marginal)
 
-# Convert marginal to dataframe
-average_be_log_df <- data.frame(
-  x = average_be_log_marginal[, 1],
-  density = average_be_log_marginal[, 2]
-)
+# Posterior sd
+var_beta <- inla.emarginal(function(x) x^2, marginal) - mean_beta^2
+sd_beta <- sqrt(var_beta)
 
-# Split for red and blue shading
-df_negative <- average_be_log_df %>% filter(x < 0)
-df_positive <- average_be_log_df %>% filter(x >= 0)
+# -------------------------------
+# 2. Shaded regions
+# -------------------------------
+df_negative <- dplyr::filter(marg_df, x < 0)
+df_positive <- dplyr::filter(marg_df, x >= 0)
 
-# Percentiles
+# -------------------------------
+# 3. Percentiles
+# -------------------------------
 percentiles <- seq(0.05, 0.95, by = 0.05)
-percentile_values <- sapply(percentiles, function(p) inla.qmarginal(p, average_be_log_marginal))
+percentile_values <- sapply(percentiles, function(p) inla.qmarginal(p, marginal))
+
 percentile_table <- data.frame(
   Percentile = paste0(percentiles * 100, "%"),
   Value = round(percentile_values, 4)
 )
 
-# Plot
+# -------------------------------
+# 4. Plot posterior density
+# -------------------------------
 posterior_plot <- ggplot() +
   geom_area(data = df_negative, aes(x = x, y = density), fill = "red", alpha = 0.4) +
   geom_area(data = df_positive, aes(x = x, y = density), fill = "blue", alpha = 0.4) +
-  geom_line(data = average_be_log_df, aes(x = x, y = density), size = 1.2, color = "black") +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "darkred", size = 0.8) +
-  geom_vline(xintercept = mean_be_log, linetype = "solid", color = "blue", size = 1.2) +
-  geom_vline(xintercept = mean_be_log + sd_be_log, linetype = "dotted", color = "darkblue", size = 1) +
-  geom_vline(xintercept = mean_be_log - sd_be_log, linetype = "dotted", color = "darkblue", size = 1) +
+  geom_line(data = marg_df, aes(x = x, y = density), size = 1.2, color = "black") +
+  geom_vline(xintercept = 0,        linetype = "dashed", color = "darkred", size = 0.8) +
+  geom_vline(xintercept = mean_beta,                color = "blue",     size = 1.2) +
+  geom_vline(xintercept = mean_beta + sd_beta,      linetype = "dotted", color = "darkblue") +
+  geom_vline(xintercept = mean_beta - sd_beta,      linetype = "dotted", color = "darkblue") +
+
   annotate("text",
-           x = max(average_be_log_df$x) - 0.1,
-           y = max(average_be_log_df$density) * 1.05,
+           x = max(marg_df$x) - 0.1,
+           y = max(marg_df$density) * 1.05,
            label = paste0("Negative Probability: ", round(prob_negative, 3)),
            color = "red", size = 4, hjust = 1, fontface = "italic") +
+
   annotate("text",
-           x = max(average_be_log_df$x) - 0.1,
-           y = max(average_be_log_df$density) * 0.95,
+           x = max(marg_df$x) - 0.1,
+           y = max(marg_df$density) * 0.95,
            label = paste0("Positive Probability: ", round(prob_positive, 3)),
            color = "blue", size = 4, hjust = 1, fontface = "italic") +
-  annotate("text", x = mean_be_log, y = max(average_be_log_df$density) * 0.85, label = "Mean", color = "blue", angle = 90, vjust = -0.4, size = 4) +
-  annotate("text", x = mean_be_log + sd_be_log, y = max(average_be_log_df$density) * 0.75, label = "+1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
-  annotate("text", x = mean_be_log - sd_be_log, y = max(average_be_log_df$density) * 0.75, label = "−1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
-  labs(x = "Effect Size", y = "Posterior Density") +
-  scale_x_continuous(
-    breaks = seq(floor(min(average_be_log_df$x)), ceiling(max(average_be_log_df$x)), by = 1),
-    labels = function(x) gsub("-", "\u2212", x)  # replaces hyphen with correct minus
+
+  annotate("text", x = mean_beta,
+           y = max(marg_df$density) * 0.85,
+           label = "Mean", color = "blue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text", x = mean_beta + sd_beta,
+           y = max(marg_df$density) * 0.75,
+           label = "+1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
+  annotate("text", x = mean_beta - sd_beta,
+           y = max(marg_df$density) * 0.75,
+           label = "−1 SD", color = "darkblue", angle = 90, vjust = -0.4, size = 4) +
+
+  labs(
+    x = paste0("Effect Size: ", target_var),
+    y = "Posterior Density"
   ) +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 8)) +
-  theme(
-    panel.background = element_rect(fill = "white", color = NA),
-    plot.background = element_rect(fill = "white", color = NA),
-    panel.grid.major = element_line(color = "grey85"),
-    panel.grid.minor = element_line(color = "grey90", size = 0.1),
-    axis.title.x = element_text(size = 10, face = "plain"),
-    axis.title.y = element_text(size = 10, face = "plain"),
-    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
-    plot.title = element_blank()
-  )
-
-
-# Export everything to PDF
-pdf("average_be_log_output.pdf", width = 8, height = 10)
-
-# 1. Plot
-print(posterior_plot)
-
-# 2. Marginal table
-grid.newpage()
-grid.text("Posterior Marginal Distribution (first 20 rows)", y = 0.95, gp = gpar(fontsize = 12, fontface = "bold"))
-grid.draw(tableGrob(head(average_be_log_df, 20)))
-
-# 3. Percentile table
-grid.newpage()
-grid.text("Posterior Percentiles (5% increments)", y = 0.95, gp = gpar(fontsize = 12, fontface = "bold"))
-grid.draw(tableGrob(percentile_table))
-
-dev.off()
-
-posterior_plot
+  theme_minimal(base_size = 12)
 
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # GWR NB-based modeling and model diagnostics
@@ -726,149 +766,5 @@ k <- length(gwr_model$SDF) - 2  # Subtracting intercept and sum.w
 adj_pseudo_R2 <- 1 - ((1 - pseudo_R2) / (1 - (k / n)))
 adj_pseudo_R2
 
-
-
-
 ```
-
-
-<!-- # MGWR NB-based modeling and model diagnostics -->
-
-<!-- ```{r MGWR NB-based, echo = TRUE} -->
-
-
-<!-- # Golden( -->
-<!-- #       data = original_data, -->
-<!-- #       formula.no.offset, -->
-<!-- #       lat = "Y", -->
-<!-- #       long = "X", -->
-<!-- #       globalmin = TRUE, -->
-<!-- #       method = "adaptive_bsq", -->
-<!-- #       model = "negbin", -->
-<!-- #       bandwidth = "cv", -->
-<!-- #       force = TRUE, -->
-<!-- #       ) -->
-<!-- # the output is 262 feet -->
-
-
-<!-- #try smaller dataset -->
-
-<!--  #Fit the GWNBR model -->
-<!--  model.gwr.nb <- gwzinbr( -->
-<!--    data = original_data, -->
-<!--    formula = formula.no.offset, -->
-<!--    lat = "Y", -->
-<!--    long = "X", -->
-<!--    model = "negbin", -->
-<!--    method = "adaptive_bsq", -->
-<!--    h=262, -->
-<!--    force=TRUE -->
-<!--  ) -->
-
-<!-- ## Bandwidth -->
-<!-- model.gwr.nb$bandwidth -->
-
-<!-- ## Goodness of fit measures -->
-<!-- model.gwr.nb$measures -->
-
-<!-- ``` -->
-
-
-
-#CAR NB-based modeling in a Bayesian environment
-# NOT APPLICABLE
-
-
-# ```{r CAR NB-based, echo = TRUE}
-# 
-# # The input should not be a sf object
-# original_data_no_geometry <- st_drop_geometry(original_data)
-# 
-# # Fit the negative binomial spatial GLM
-# model.CAR.nb <- glmmfields(formula.no.offset,
-#                     data = original_data_no_geometry,
-#                     lat = "Y",
-#                     lon = "X",
-#                     family = nbinom2(link = "log"),
-#                     offset = original_data_no_geometry$area_acre_logged,
-#                     verbose = TRUE
-#                     );model.CAR.nb
-# ```
-
-
-
-
-# GLM Poisson-based modeling and model diagnostics
-
-# ```{r GLM Poisson-based, echo = TRUE}
-# poisson.glm <- glm(formula, family = poisson, data = original_data);summary(poisson.glm)
-# 
-# # capturing the R-squared values
-# rsq_value <- rsq(poisson.glm, adj = TRUE);print(rsq_value)
-# 
-# #checking the overdispersion
-# check_overdispersion(poisson.glm) # method1
-# 
-# #Model diagnostics
-# residuals_nb <- residuals(poisson.glm, type = "pearson")
-# moran_test <- moran.test(residuals_nb, data_listw);print(moran_test) # Moran's test on dependent variable
-# lm_test <- lm.morantest(poisson.glm, listw = data_listw);print(lm_test) # Moran's test on residuals
-# bptest(poisson.glm) # Breusch-Pagan test for heteroscedasticity
-# wald_test <- wald.test(b = coef(poisson.glm), Sigma = vcov(poisson.glm), Terms = 2:length(coef(poisson.glm)));print(wald_test) #Wald test #Terms argument checks all coefficients except the intercept
-# lag_error_test <- lm.RStests(poisson.glm, data_listw, test = "all");print(lag_error_test) # Perform the LM tests for spatial dependence
-# ```
-
-
-# CAR Poisson-based modeling in a Bayesian environment
-#Model 1
-
-# ```{r CAR Poisson-based model 1, echo = TRUE}
-# 
-# fit <- stan_car(
-#   formula = formula,
-#   data = original_data,
-#   C = adj_matrix,
-#   family = poisson(),
-#   chains = 4, iter = 2000
-# )
-# 
-# print(fit)
-# print(plot(fit))
-# print(sp_diag(y = fit, shape = original_data))
-# 
-# ```
-
-# CAR Poisson-based modeling in a Bayesian environment
-#Model 2
-
-# ```{r CAR Poisson-based model 2, echo = TRUE}
-# 
-# 
-# # Fit the CAR model using INLA with Poisson likelihood
-# model_inla <- CAR_INLA(carto = original_data, ID.area = "id", O = "crime.count", E = "area_acre_logged", X = independent_vars, model = "global", n.sample = 10000)
-# 
-# residuals(model_inla)
-# 
-# summary(model_inla)
-# 
-# ```
-
-
-# GWR Poisson-based modeling and model diagnostics
-
-# ```{r GWR Poisson-based, echo = TRUE}
-# 
-# DM <- gw.dist(dp.locat = coords_original_data)
-# bandwidth <- bw.ggwr(formula,data = original_data, dMat =DM,family="poisson")
-# 
-# gwpr_model <- ggwr.basic(formula, data = original_data,dMat = DM, bw = bandwidth, family = "poisson")
-# 
-# gwpr_model
-# 
-# # Deviance
-# deviance_value <- gwpr_model$GW.diagnostic$gw.deviance
-# cat("Deviance: ", deviance_value)
-# 
-# summary(gwpr_model) # Checking the summary of the model
-# ```
 
