@@ -1,4 +1,4 @@
-import os, warnings, numpy as np, pandas as pd, geopandas as gpd, networkx as nx
+import os, warnings, numpy as np, pandas as pd, geopandas as gpd, networkx as nx, scipy
 from shapely.geometry import Point, LineString, MultiLineString
 from tqdm import tqdm
 warnings.filterwarnings("ignore")
@@ -49,45 +49,69 @@ class StreetNetworkProcessor:
                 f"CRS mismatch:\nEdges: {self.source_edges.crs}\nNPA: {self.NPA_shape.crs}\n"
                 "Please reproject before running."
             )
+
+    def _as_lines(self, geom):
+        """Return a list of LineStrings for a geometry (LineString/MultiLineString)."""
+        if geom is None or geom.is_empty:
+            return []
+        if isinstance(geom, LineString):
+            return [geom]
+        if isinstance(geom, MultiLineString):
+            return list(geom.geoms)
+        return []
+
+    def _to_linestring(self, geom):
+        """Ensure geometry is a LineString (flatten MultiLineString if needed)."""
+        if isinstance(geom, MultiLineString):
+            coords = []
+            for part in geom.geoms:
+                coords.extend(list(part.coords))
+            return LineString(coords)
+        return geom
+
     # --------------------------------------------------------------------------
     ## Step 1: Node Extraction (Mapping street endpoints to nodes)
     # --------------------------------------------------------------------------
     def extract_nodes(self):
-        """
-        Identifies unique endpoints for every street segment, creates a node GeoDataFrame,
-        and updates the edge GeoDataFrame with corresponding 'start_node' and 'end_node' IDs.
-        """
         print("Starting node extraction (Step 1)...")
         endpoint_coords = []
         node_id = 0
-        node_id_mapping = {}  # Key: (x, y) coordinate tuple, Value: unique integer node ID
+        node_id_mapping = {}  # Key: (x, y), Value: node id
         crs = self.source_edges.crs
 
-        total_edges = len(self.source_edges)  # Get total count for tqdm
+        total_edges = len(self.source_edges)
 
-        # TQDM INTEGRATION: Wrap the iteration over edges
         for index, row in tqdm(self.source_edges.iterrows(), total=total_edges, desc="Extracting Nodes"):
-            geometry = row['geometry']
-            start_point = Point(geometry.coords[0])
-            end_point = Point(geometry.coords[-1])
+            geom = row.geometry
 
-            # Process Start Point
-            if start_point.coords[0] not in node_id_mapping:
-                endpoint_coords.append({'id': node_id, 'geometry': start_point})
-                node_id_mapping[start_point.coords[0]] = node_id
+            lines = self._as_lines(geom)
+            if not lines:
+                continue
+
+            # Use the first and last part to define endpoints for multipart features
+            first_line = lines[0]
+            last_line = lines[-1]
+
+            start_xy = tuple(first_line.coords[0])
+            end_xy = tuple(last_line.coords[-1])
+
+            # Start node
+            if start_xy not in node_id_mapping:
+                endpoint_coords.append({'id': node_id, 'geometry': Point(start_xy)})
+                node_id_mapping[start_xy] = node_id
                 start_node_id = node_id
                 node_id += 1
             else:
-                start_node_id = node_id_mapping[start_point.coords[0]]
+                start_node_id = node_id_mapping[start_xy]
 
-            # Process End Point
-            if end_point.coords[0] not in node_id_mapping:
-                endpoint_coords.append({'id': node_id, 'geometry': end_point})
-                node_id_mapping[end_point.coords[0]] = node_id
+            # End node
+            if end_xy not in node_id_mapping:
+                endpoint_coords.append({'id': node_id, 'geometry': Point(end_xy)})
+                node_id_mapping[end_xy] = node_id
                 end_node_id = node_id
                 node_id += 1
             else:
-                end_node_id = node_id_mapping[end_point.coords[0]]
+                end_node_id = node_id_mapping[end_xy]
 
             self.source_edges.at[index, 'start_node'] = int(start_node_id)
             self.source_edges.at[index, 'end_node'] = int(end_node_id)
@@ -123,7 +147,7 @@ class StreetNetworkProcessor:
 
             if len(connected_edges) != 2: return edges_df
 
-            geoms = connected_edges['geometry'].tolist()
+            geoms = [self._to_linestring(g) for g in connected_edges['geometry'].tolist()]
             common_point_geom = nodes_df[nodes_df.index == node].geometry.iloc[0]
             common_point = (common_point_geom.x, common_point_geom.y)
 
@@ -246,7 +270,7 @@ class StreetNetworkProcessor:
         """
         Creates a new, locally-indexed set of nodes for the given set of local edges.
         """
-        edge_NPA['geometry'] = edge_NPA['geometry'].apply(self._convert_multilinestring_to_linestring)
+        edge_NPA['geometry'] = edge_NPA['geometry'].apply(self._to_linestring)
 
         endpoint_coords = []
         node_id = 0
