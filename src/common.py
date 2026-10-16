@@ -415,3 +415,47 @@ def explore_pca(data, variables, label, rotation="varimax", method="minres"):
 
     print(f"\n[{label}] Retaining {n_final} component(s).")
     return n_final, reports[n_final]
+
+
+def select_representatives(report, label="", top_k=5):
+    """
+    Interactive choice of one original measure to stand for each rotated component
+    (the paper's Table 2 step): the components themselves are not entered in the
+    regression; the chosen measures are, after a log(x + 1) transformation.
+    For each component the top-loading measures are listed with their loading on
+    that component and their largest loading on any other component (cross-loading).
+    Type a number or a measure name, or press Enter to take the highest loader.
+    A measure cannot represent two components. Returns the chosen names in
+    component order.
+    """
+    rot = report["rotated_loadings"]
+    chosen = []
+    title = f" ({label})" if label else ""
+    print(f"\n=== Representative measures{title}: one original measure per component ===")
+    print("Rule of thumb: the highest absolute loading; when two are close, prefer the one with the "
+          "smaller cross-loading and the clearer theoretical meaning.")
+    for comp in rot.columns:
+        ranked = rot[comp].abs().sort_values(ascending=False)
+        candidates = [v for v in ranked.index if v not in chosen][:top_k]
+        print(f"\n{comp}:")
+        for i, v in enumerate(candidates, 1):
+            others = rot.loc[v].drop(comp).abs()
+            cross = f"max elsewhere {others.max():.2f} on {others.idxmax()}" if len(others) else "no other component"
+            print(f"  {i}. {v:<12s} loading {rot.loc[v, comp]:+.2f}   {cross}")
+        while True:
+            ans = input(f"  Measure for {comp} [{candidates[0]}]: ").strip()
+            if ans == "":
+                pick = candidates[0]
+                break
+            if ans.isdigit() and 1 <= int(ans) <= len(candidates):
+                pick = candidates[int(ans) - 1]
+                break
+            if ans in rot.index and ans not in chosen:
+                pick = ans
+                break
+            print("  -> enter a number from the list, an unused measure name, or Enter for the first")
+        chosen.append(pick)
+        print(f"  -> {comp}: {pick}")
+    print("\nSelected representatives: " + ", ".join(chosen))
+    display(rot.loc[chosen].round(3))
+    return chosen

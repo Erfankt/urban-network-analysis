@@ -1,12 +1,13 @@
 """
 Script version of pca_analysis.ipynb: the same steps and the same shared functions
-(common.py, user_inputs.py), run from a terminal instead of a notebook.
+(common.py, user_inputs.py, final_dataset.py), run from a terminal instead of a notebook.
 
     python pca_analysis.py [--no-windows] [--no-distribution-plots]
 
 Reads   ../data/final_dataset/extracted_measures.shp   (written by run_analysis.py)
-Writes  ../data/final_dataset/final_components.shp     (component scores for spatial_modeling.Rmd)
-        ../data/final_dataset/user_selection.json      (PCA choices are appended)
+Writes  ../data/final_dataset/final_dataset.shp / .csv  (the modeling dataset: the repository's end product)
+        ../data/final_dataset/final_dataset_dictionary.csv  (what each column is and how to use it)
+        ../data/final_dataset/user_selection.json      (all interactive choices, for the record)
         ../output/pca_diagnostics/                     (every figure as PNG, plus the neighborhood map)
 
 Every figure is saved. By default the PCA-stage figures (overview and each candidate
@@ -36,7 +37,8 @@ import numpy as np, pandas as pd, geopandas as gpd, seaborn as sns, folium
 
 from run_analysis import buffer_list_mile
 from user_inputs import load_selection, update_selection, select_pca_method
-from common import explore_pca
+from common import explore_pca, select_representatives
+from final_dataset import assemble_final_dataset, write_final_dataset
 
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", 200)
@@ -182,7 +184,7 @@ else:
 # 6. PCA: method, then the interactive choice of components for each block
 # --------------------------------------------------------------------------
 section("6. Component analysis settings")
-pca_method = select_pca_method()   # principal / minres / ml (see the note in the README)
+pca_method = select_pca_method()   # principal / minres / ml (see the README)
 pca_rotation = "varimax"           # rotation of the retained components (paper: varimax)
 print(f"method = {pca_method}, rotation = {pca_rotation}")
 
@@ -191,27 +193,24 @@ _stage = "network"
 n_net, pca_net = explore_pca(gdf, final_list_net, label="street network",
                              rotation=pca_rotation, method=pca_method)
 
-section("8. Socio-spatial controls: overview, candidate solutions, final choice")
+section("8. Street-network measures: one representative measure per component")
+network_representatives = select_representatives(pca_net, label="street network")
+
+section("9. Socio-spatial controls: overview, candidate solutions, final choice")
 _stage = "controls"
 n_ctrl, pca_ctrl = explore_pca(gdf, ctrl_vars, label="socio-spatial controls",
                                rotation=pca_rotation, method=pca_method)
 
 update_selection(pca_method=pca_method, pca_rotation=pca_rotation,
-                 pca_factors_network=n_net, pca_factors_ctrl=n_ctrl)
+                 pca_factors_network=n_net, pca_factors_ctrl=n_ctrl,
+                 network_representatives=network_representatives)
 
 # --------------------------------------------------------------------------
-# 9. Export the rotated component scores for the modeling stage
+# 10. Assemble and write the final modeling dataset (the repository's end product)
 # --------------------------------------------------------------------------
-section("9. Export")
-rotated_net_scores = pca_net["rotated_scores"].copy()
-rotated_net_scores.columns = [f"PC{i+1}_net" for i in range(n_net)]
-rotated_ctrl_scores = pca_ctrl["rotated_scores"].copy()
-rotated_ctrl_scores.columns = [f"PC{i+1}_ctrl" for i in range(n_ctrl)]
-
-final_gdf = pd.concat([gdf[["id", "geometry"]].reset_index(drop=True),
-                       rotated_net_scores, rotated_ctrl_scores], axis=1)
-final_gdf = gpd.GeoDataFrame(final_gdf, geometry="geometry", crs=gdf.crs)
-final_gdf.to_file("../data/final_dataset/final_components.shp")
-print(f"Exported {len(final_gdf)} rows: {n_net} network + {n_ctrl} control components "
-      "-> ../data/final_dataset/final_components.shp")
-print(f"Choices recorded in ../data/final_dataset/user_selection.json; figures in {OUT_DIR}")
+section("10. Final dataset")
+final_gdf, dictionary = assemble_final_dataset(gdf, crime_col, network_representatives, pca_net, pca_ctrl)
+shp, csv, dic = write_final_dataset(final_gdf, dictionary)
+print(f"{len(final_gdf)} rows x {final_gdf.shape[1] - 1} columns written to:\n  {shp}\n  {csv}\n  {dic}")
+print(dictionary.to_string(index=False))
+print(f"\nChoices recorded in ../data/final_dataset/user_selection.json; figures in {OUT_DIR}")

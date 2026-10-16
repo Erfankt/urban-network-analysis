@@ -13,7 +13,8 @@ RUNNING_FROM_R = "rpycall" in sys.modules
 buffer_list_mile = [0.1, 0.25, 0.5, 0.75, 1.0]
 # The dependent (crime count) column and the control variables are chosen
 # interactively at run time (see user_inputs.py) and saved to
-# data/final_dataset/user_selection.json for the notebook and R stages.
+# data/final_dataset/user_selection.json for the component-analysis stage
+# (pca_analysis.ipynb or pca_analysis.py).
 
 source_edges_path = "../data/streetnetwork/streets.shp"
 NPA_shape_path = "../data/neighborhoods/neighborhoods.shp"

@@ -1,8 +1,8 @@
 """
 Interactive selection of the dependent variable and the socio-spatial control
 variables from the neighborhoods layer. The choice is saved to
-data/final_dataset/user_selection.json so pca_analysis.ipynb and
-spatial_modeling.Rmd can reuse it without re-prompting.
+data/final_dataset/user_selection.json so pca_analysis.ipynb / pca_analysis.py can
+reuse it without re-prompting.
 """
 import os, json
 import geopandas as gpd

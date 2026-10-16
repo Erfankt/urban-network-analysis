@@ -32,3 +32,5 @@ Thumbs.db
 # ============================================
 data/processed/
 output/
+data/final_dataset/*
+!data/final_dataset/.gitkeep
