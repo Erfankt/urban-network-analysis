@@ -1,0 +1,18 @@
+# Normalize line endings so Windows/Linux checkouts don't show whole-file diffs
+* text=auto
+*.py text eol=lf
+*.R text eol=lf
+*.Rmd text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.ipynb text eol=lf
+
+# Geospatial binaries
+*.shp binary
+*.shx binary
+*.dbf binary
+*.prj binary
+*.cpg binary
+*.sbn binary
+*.sbx binary
+*.qix binary

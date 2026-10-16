@@ -35,13 +35,18 @@ class StreetNetworkProcessor:
     def _load_base_data(self):
         """Loads and performs initial cleaning on the global datasets."""
 
-        # 1. Load and clean global edges: remove retired streets
+        # 1. Load global edges (assumed already cleaned by the user)
         self.source_edges = gpd.read_file(self.source_edges_path)
 
         # 2. Load NPA polygons: these define the study area boundaries
         self.NPA_shape = gpd.read_file(self.NPA_shape_path)
+        if "id" not in self.NPA_shape.columns:
+            raise ValueError("Neighborhood layer must have a unique identifier column named 'id'.")
 
-        print("Base data loaded and initialized.")
+        # 3. Edges and polygons must share a projected CRS (buffers are in feet)
+        self._validate_crs()
+
+        print(f"Base data loaded: {len(self.source_edges)} edges, {len(self.NPA_shape)} neighborhoods.")
         
     def _validate_crs(self):
         if self.source_edges.crs != self.NPA_shape.crs:
@@ -195,6 +200,14 @@ class StreetNetworkProcessor:
     # --------------------------------------------------------------------------
     ## Main Control Flow
     # --------------------------------------------------------------------------
+    @staticmethod
+    def buffer_code(buffer_mile):
+        """Suffix used in output column names: 0.1 -> '1', 0.25 -> '025', 0.5 -> '05',
+        0.75 -> '075', 1.0 -> '10' (kept short so shapefile field names stay <= 10 chars)."""
+        if buffer_mile < 1 and buffer_mile != 0.1:
+            return str(buffer_mile).replace(".", "")
+        return str(int(buffer_mile * 10))
+
     def process_buffers(self, buffer_list_mile):
         """
         Controls the analysis flow by iterating through a list of buffer distances.
@@ -203,9 +216,7 @@ class StreetNetworkProcessor:
 
         for self.buffer_mile in buffer_list_mile:
             self.buffer_distance_feet = self.buffer_mile * 5280  # Convert miles to feet
-            self.buffer_mile_name = str(self.buffer_mile).replace(".", "").replace("0",
-                                                                                   "0") if self.buffer_mile < 1 and self.buffer_mile != 0.1 else str(
-                int(self.buffer_mile * 10))
+            self.buffer_mile_name = self.buffer_code(self.buffer_mile)
 
             print(f"\n--- Processing Buffer: {self.buffer_mile} miles ({self.buffer_mile_name}) ---")
 
@@ -421,6 +432,8 @@ class StreetNetworkProcessor:
         for _, df in results.items():
             npa_merged = npa_merged.merge(df, on='id', how='left')
 
-        final_path = os.path.join("../data/final_dataset", "extracted_measures.shp")
+        final_dir = "../data/final_dataset"
+        os.makedirs(final_dir, exist_ok=True)
+        final_path = os.path.join(final_dir, "extracted_measures.shp")
         npa_merged.to_file(final_path)
-        print("\nFinal analytical base table (Final_dataset.shp) created successfully!")
+        print(f"\nFinal analytical base table written to {final_path}")

@@ -9,7 +9,8 @@ RUNNING_FROM_R = "rpycall" in sys.modules
 ## USER INPUT
 # --------------------------------------------------------------------------
 
-buffer_list_mile = [0.25, 0.5, 0.75, 1.0]
+# Five nested buffer bands used in the paper (Section 3.3.3)
+buffer_list_mile = [0.1, 0.25, 0.5, 0.75, 1.0]
 ctrl_vars = ['bachdg', 'emp', 'home_own', 'resoccup', 'sinfamrate', 'sinfamage']
 crime_col = "propcrimct"
 
