@@ -15,7 +15,7 @@ report) also open in windows so they can be inspected while the prompt waits: cl
 windows to continue. --no-windows saves them silently (for remote or headless runs);
 --no-distribution-plots skips the per-variable histogram/boxplot figures.
 """
-import argparse, itertools, os, re, sys, warnings
+import argparse, os, sys, warnings
 from pathlib import Path
 
 # The shared modules use paths relative to src/, so run from there whatever the caller's cwd is.
@@ -37,7 +37,7 @@ import numpy as np, pandas as pd, geopandas as gpd, seaborn as sns, folium
 
 from run_analysis import buffer_list_mile
 from user_inputs import load_selection, update_selection, select_pca_method
-from common import explore_pca, select_representatives
+from common import explore_pca, select_representatives, FigureSaver
 from final_dataset import assemble_final_dataset, write_final_dataset
 
 pd.set_option("display.max_columns", None)
@@ -48,42 +48,12 @@ OUT_DIR = Path("../output/pca_diagnostics")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # --------------------------------------------------------------------------
-# Figure handling: save every figure that common.py would "show"; open windows
-# only when allowed. plt.show() blocks until the windows are closed, which is
-# what lets the user look at a report before answering the next prompt.
+# Figure handling: every figure common.py would "show" is saved to OUT_DIR and,
+# unless --no-windows, also opened in a window. plt.show() blocks until the
+# windows are closed, which lets the user look at a report before answering the
+# next prompt.
 # --------------------------------------------------------------------------
-_counter = itertools.count(1)
-_stage = "figure"
-
-
-def _slug(text):
-    return re.sub(r"[^A-Za-z0-9]+", "_", str(text)).strip("_").lower()[:60]
-
-
-def _save_open_figures():
-    paths = []
-    for num in plt.get_fignums():
-        fig = plt.figure(num)
-        title = next((ax.get_title() for ax in fig.axes if ax.get_title()), "figure")
-        path = OUT_DIR / f"{next(_counter):03d}_{_slug(_stage)}_{_slug(title)}.png"
-        fig.savefig(path, dpi=120, bbox_inches="tight")
-        paths.append(path)
-    return paths
-
-
-_original_show = plt.show
-
-
-def _show_and_save(*a, **k):
-    for path in _save_open_figures():
-        print(f"  figure saved: {path}")
-    if args.no_windows:
-        plt.close("all")
-    else:
-        _original_show(*a, **k)
-
-
-plt.show = _show_and_save   # common.py calls plt.show() through the same module object
+figures = FigureSaver(OUT_DIR, show=not args.no_windows).install()
 
 
 def section(title):
@@ -176,7 +146,7 @@ else:
         sns.stripplot(x=gdf[col], color="black", jitter=True, alpha=0.6, ax=axes[2])
         axes[2].set_title("boxplot with observations")
         fig.tight_layout()
-        fig.savefig(OUT_DIR / f"dist_{_slug(col)}.png", dpi=110)
+        fig.savefig(OUT_DIR / f"dist_{FigureSaver.slug(col)}.png", dpi=110)
         plt.close(fig)
     print(f"{len(numerical_columns)} figures saved as {OUT_DIR}/dist_<variable>.png")
 
@@ -189,7 +159,7 @@ pca_rotation = "varimax"           # rotation of the retained components (paper:
 print(f"method = {pca_method}, rotation = {pca_rotation}")
 
 section("7. Street-network measures: overview, candidate solutions, final choice")
-_stage = "network"
+figures.stage = "network"
 n_net, pca_net = explore_pca(gdf, final_list_net, label="street network",
                              rotation=pca_rotation, method=pca_method)
 
@@ -197,7 +167,7 @@ section("8. Street-network measures: one representative measure per component")
 network_representatives = select_representatives(pca_net, label="street network")
 
 section("9. Socio-spatial controls: overview, candidate solutions, final choice")
-_stage = "controls"
+figures.stage = "controls"
 n_ctrl, pca_ctrl = explore_pca(gdf, ctrl_vars, label="socio-spatial controls",
                                rotation=pca_rotation, method=pca_method)
 

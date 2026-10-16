@@ -1,3 +1,5 @@
+import functools, itertools, re
+from pathlib import Path
 import pandas as pd, numpy as np, matplotlib.pyplot as plt,seaborn as sns
 from sklearn.preprocessing import StandardScaler
 from factor_analyzer import FactorAnalyzer
@@ -459,3 +461,64 @@ def select_representatives(report, label="", top_k=5):
     print("\nSelected representatives: " + ", ".join(chosen))
     display(rot.loc[chosen].round(3))
     return chosen
+
+# =============================================================================
+# Keeping the figures: FigureSaver writes every figure that plt.show() is about to
+# display to a folder, then displays it as usual (or closes it). Used by both
+# pca_analysis.py and pca_analysis.ipynb so the diagnostics stay on disk.
+# =============================================================================
+
+_ORIGINAL_SHOW = plt.show   # captured once at import time, so install() can be called repeatedly
+
+
+class FigureSaver:
+    """
+    Saves every figure that plt.show() is about to display as a numbered PNG in
+    out_dir, named after the current stage and the figure title, and then either
+    displays it as usual (show=True: a window in a script, inline in a notebook)
+    or closes it without displaying (show=False).
+
+        figures = FigureSaver("../output/pca_diagnostics").install()
+        figures.stage = "network"      # prefix of the files saved from now on
+    """
+
+    def __init__(self, out_dir, show=True):
+        self.out_dir = Path(out_dir)
+        self.show = show
+        self.stage = "figure"
+        self._counter = itertools.count(1)
+
+    @staticmethod
+    def slug(text):
+        return re.sub(r"[^A-Za-z0-9]+", "_", str(text)).strip("_").lower()[:60]
+
+    def install(self):
+        """Route plt.show() through this saver (safe to call more than once)."""
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        saver = self
+
+        @functools.wraps(_ORIGINAL_SHOW)
+        def show(*args, **kwargs):          # a plain function: matplotlib sets attributes on plt.show
+            saver._show_and_save(*args, **kwargs)
+
+        plt.show = show
+        return self
+
+    def save_open_figures(self):
+        paths = []
+        for num in plt.get_fignums():
+            fig = plt.figure(num)
+            titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
+            xlabels = [ax.get_xlabel() for ax in fig.axes if ax.get_xlabel()]
+            label = (titles or xlabels or ["figure"])[0]
+            path = self.out_dir / f"{next(self._counter):03d}_{self.slug(self.stage)}_{self.slug(label)}.png"
+            fig.savefig(path, dpi=120, bbox_inches="tight")
+            paths.append(path)
+        return paths
+
+    def _show_and_save(self, *args, **kwargs):
+        for path in self.save_open_figures():
+            print(f"  figure saved: {path}")
+        if self.show:
+            _ORIGINAL_SHOW(*args, **kwargs)   # in a window this returns once the window is closed
+        plt.close("all")                      # never keep figures around to be saved twice
