@@ -82,3 +82,38 @@ def load_selection(selection_path=SELECTION_PATH):
     with open(selection_path) as f:
         sel = json.load(f)
     return sel["crime_col"], sel["ctrl_vars"]
+
+
+PCA_METHODS = {
+    "principal": "principal components (PCA in the strict sense, as the paper describes it)",
+    "minres":    "minimum-residual common factor analysis (factor_analyzer default; what the original run used)",
+    "ml":        "maximum-likelihood common factor analysis",
+}
+
+
+def select_pca_method():
+    """Prompt for the extraction method used by pca_analysis.ipynb; returns its name."""
+    keys = list(PCA_METHODS)
+    print("\nExtraction method for the component analysis:")
+    for i, k in enumerate(keys, 1):
+        print(f"  {i}. {k:10s} {PCA_METHODS[k]}")
+    while True:
+        ans = input("Choose a method (number or name): ").strip().lower()
+        if ans.isdigit() and 1 <= int(ans) <= len(keys):
+            return keys[int(ans) - 1]
+        if ans in keys:
+            return ans
+        print("  -> choose one of: " + ", ".join(keys))
+
+
+def update_selection(selection_path=SELECTION_PATH, **fields):
+    """Add or overwrite entries in the saved selection (e.g. the PCA choices made in the notebook)."""
+    sel = {}
+    if os.path.exists(selection_path):
+        with open(selection_path) as f:
+            sel = json.load(f)
+    sel.update(fields)
+    os.makedirs(os.path.dirname(selection_path), exist_ok=True)
+    with open(selection_path, "w") as f:
+        json.dump(sel, f, indent=2)
+    return sel
