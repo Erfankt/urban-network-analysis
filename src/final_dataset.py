@@ -50,7 +50,11 @@ def assemble_final_dataset(gdf, crime_col, representatives, pca_net, pca_ctrl):
 
     final = gpd.GeoDataFrame(pd.concat([base, net, ctrl], axis=1), geometry="geometry", crs=gdf.crs)
 
-    crs_name = gdf.crs.to_string() if gdf.crs is not None else "unknown CRS"
+    if gdf.crs is None:
+        crs_name = "unknown CRS"
+    else:
+        epsg = gdf.crs.to_epsg()
+        crs_name = f"EPSG:{epsg}, {gdf.crs.name}" if epsg else (gdf.crs.name or "unnamed CRS")
     rot = pca_net["rotated_loadings"]
     rows = [
         ("id", "identifier", "neighborhood identifier (unique)"),
