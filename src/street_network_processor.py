@@ -3,6 +3,9 @@ from shapely.geometry import Point, LineString, MultiLineString
 from tqdm import tqdm
 warnings.filterwarnings("ignore")
 
+# The eight configuration measures, in output order (see README for definitions)
+NETWORK_METRICS = ["int_den", "st_den", "nd_deg", "cl_cof", "shtpth", "bt_cnt", "cl_cnt", "pr_cnt"]
+
 
 class StreetNetworkProcessor:
     """
@@ -208,6 +211,11 @@ class StreetNetworkProcessor:
             return str(buffer_mile).replace(".", "")
         return str(int(buffer_mile * 10))
 
+    @classmethod
+    def measure_columns(cls, buffer_list_mile):
+        """Names of the measure columns written for these buffers, in output order."""
+        return [f"{m}{cls.buffer_code(b)}" for b in buffer_list_mile for m in NETWORK_METRICS]
+
     def process_buffers(self, buffer_list_mile):
         """
         Controls the analysis flow by iterating through a list of buffer distances.
@@ -249,8 +257,7 @@ class StreetNetworkProcessor:
             edge_NPA = self.edges_version_2[self.edges_version_2.intersects(polygon.geometry)].copy()
 
             if edge_NPA.empty:
-                measures = {f"{m}{self.buffer_mile_name}": np.nan for m in
-                            ["int_den", "st_den", "nd_deg", "cl_cof", "shtpth", "bt_cnt", "cl_cnt", "pr_cnt"]}
+                measures = {f"{m}{self.buffer_mile_name}": np.nan for m in NETWORK_METRICS}
                 results_list.append({'id': NPA_id, **measures})
                 continue
 
@@ -377,8 +384,7 @@ class StreetNetworkProcessor:
         """
 
         if G.number_of_nodes() < 2:
-            return {f"{m}{self.buffer_mile_name}": np.nan for m in
-                    ["int_den", "st_den", "nd_deg", "cl_cof", "shtpth", "bt_cnt", "cl_cnt", "pr_cnt"]}
+            return {f"{m}{self.buffer_mile_name}": np.nan for m in NETWORK_METRICS}
 
         measures = {}
 

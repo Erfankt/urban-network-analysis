@@ -6,7 +6,7 @@ Reproducible data-construction pipeline for the paper
 
 Starting from a cleaned street centerline layer and a set of neighborhood polygons, the pipeline builds the neighborhood-level street networks, measures their configuration at five nested spatial scales, reduces the measures (and the socio-spatial controls) with a component analysis, and writes a modeling-ready dataset with a data dictionary. The repository ends there: the spatial count models of the paper (negative binomial GLM, SAR-NB and CAR-NB estimated with INLA, GWR-NB) consume this dataset but are fitted outside the repository.
 
-Every analytical choice that depends on the data (dependent variable, control variables, extraction method, number of components, representative measures) is made interactively at run time and recorded in `data/final_dataset/user_selection.json`, so the pipeline can be rerun on another city or with other choices without editing code.
+Every input and every analytical choice (input files, buffer distances, dependent variable, control variables, extraction method, number of components, representative measures) is entered interactively at run time, validated, and recorded in `data/final_dataset/user_selection.json`, so the pipeline can be rerun on another city or with other choices without editing code.
 
 ## Workflow
 
@@ -15,7 +15,8 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
 (cleaned street centerline)               (polygons: id, crime count, control variables)
             |                                        |
             v                                        v
-  1. python run_analysis.py      - choose dependent variable and controls (prompt)
+  1. python run_analysis.py      - input files, buffer distances, dependent variable and
+                                   controls (prompts with defaults, or command-line flags)
                                  - build the network, measure 8 metrics x 5 buffers per neighborhood
                                  -> data/final_dataset/extracted_measures.shp
             |
@@ -45,7 +46,7 @@ pip install -r requirements.txt
 
 ## Input data
 
-Both layers go in `data/` under the names below (any `.shp` in `data/` is ignored by git) and must share the same **projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption, and refuses to run when the two layers' CRS differ.
+The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). Both layers must share the same **projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The setup checks both layers before anything runs: projected CRS in feet, identical CRS, line and polygon geometries, and a unique `id` column.
 
 | File | Content | Requirements |
 |---|---|---|
@@ -61,13 +62,23 @@ cd src
 python run_analysis.py
 ```
 
-The script first lists the numeric columns of the neighborhoods layer and asks for the dependent variable (crime count) and the control variables (by number or name). The choice is saved to `data/final_dataset/user_selection.json`; on later runs it offers to reuse it.
+The script asks for everything it needs, showing a default in brackets that Enter accepts: the two input shapefiles (validated as described above), the buffer distances in miles (comma-separated; the paper's five are the default; the distances must be positive and distinct and must yield column names within the 10-character shapefile limit, so at most two decimals), then, from the numeric columns of the neighborhoods layer, the dependent variable (crime count) and the control variables, by number or name. The defaults live in `DEFAULTS` at the top of `run_analysis.py`.
+
+The same answers can be given up front, for scripted or repeated runs; whatever is missing is still prompted for:
+
+```bash
+python run_analysis.py --streets ../data/streetnetwork/streets.shp --neighborhoods ../data/neighborhoods/neighborhoods.shp \
+                       --buffers 0.1,0.25,0.5,0.75,1.0 --crime propcrimct --controls bachdg,med_age,emp
+python run_analysis.py --reuse        # rerun with the previously saved answers, no questions
+```
+
+The answers are saved to `data/final_dataset/user_selection.json`; on the next run the script offers to reuse them. A new setup starts a fresh file, so the stage-2 choices are made again on the new inputs.
 
 It then runs `StreetNetworkProcessor` (`src/street_network_processor.py`):
 
 1. **Node extraction**: a node at every segment endpoint; shared endpoints become one node.
 2. **Simplification**: degree-2 nodes (continuations of the same road) are removed and their segments merged, so nodes represent intersections and dead ends.
-3. **Buffered local networks**: each neighborhood polygon is buffered by 0.1, 0.25, 0.5, 0.75 and 1.0 miles (`buffer_list_mile` in `run_analysis.py`) and the segments intersecting the buffer form the local network, of which the largest connected component is kept.
+3. **Buffered local networks**: each neighborhood polygon is buffered by the chosen distances (the paper's 0.1, 0.25, 0.5, 0.75 and 1.0 miles by default) and the segments intersecting the buffer form the local network, of which the largest connected component is kept.
 4. **Measures**: eight metrics per neighborhood and buffer, computed with NetworkX (betweenness and shortest paths are length-weighted).
 
 | Metric code | Measure | Definition |
@@ -81,7 +92,7 @@ It then runs `StreetNetworkProcessor` (`src/street_network_processor.py`):
 | `cl_cnt` | Average closeness centrality | Mean closeness of the nodes |
 | `pr_cnt` | Average PageRank | Mean PageRank of the nodes |
 
-Column names are `<metric code><buffer code>`, where the buffer code is the distance in miles with the decimal point removed: `1` (0.1 mi), `025`, `05`, `075`, `10` (1.0 mi); e.g. `int_den075`. The rule is implemented once, in `StreetNetworkProcessor.buffer_code()`, and keeps field names within the 10-character limit of shapefiles. Output: `data/final_dataset/extracted_measures.shp`, the neighborhoods layer with the 40 measure columns appended.
+Column names are `<metric code><buffer code>`, where the buffer code is the distance in miles with the decimal point removed: `1` (0.1 mi), `025`, `05`, `075`, `10` (1.0 mi); e.g. `int_den075`. The rule is implemented once, in `StreetNetworkProcessor.buffer_code()`, and keeps field names within the 10-character limit of shapefiles. Output: `data/final_dataset/extracted_measures.shp`, the neighborhoods layer with the measure columns appended (40 for the five default buffers).
 
 The run can take a while for a city-sized network: the centrality and shortest-path measures are computed for every node of every local network, and progress bars report each step.
 
@@ -101,10 +112,13 @@ Steps:
 3. **Street-network block**, 40 measures: (a) *overview*, independent of the number of components: correlation heatmap, scree plot of all eigenvalues with the Kaiser line and cumulative variance, eigenvalue table and rule-of-thumb counts; (b) *inspect*: type a number of components to see the full report for that solution (unrotated and rotated loadings as tables and heatmaps, variance explained, communalities, salient loadings per component, cross-loading variables, variables captured by no component, low communalities), as often as needed; (c) *final choice* of the number to retain; (d) **representative measures**: one original measure per retained component, chosen from the top-loading candidates (with their cross-loadings shown). Following the paper, these measures, not the component scores, are the street-network regressors, entered after a log(x + 1) transformation, which keeps the coefficients in interpretable units and preserves the buffer scale of each measure.
 4. **Socio-spatial block**: the same overview, inspect and final choice; the retained component scores are the controls.
 
-All choices are appended to `user_selection.json`:
+All choices are appended to `user_selection.json`, which after both stages reads like:
 
 ```json
 {
+  "streets_path": "../data/streetnetwork/streets.shp",
+  "neighborhoods_path": "../data/neighborhoods/neighborhoods.shp",
+  "buffer_list_mile": [0.1, 0.25, 0.5, 0.75, 1.0],
   "crime_col": "propcrimct",
   "ctrl_vars": ["bachdg", "med_age", "..."],
   "pca_method": "minres",
@@ -168,9 +182,9 @@ Choices made in the paper: five buffers (0.1 to 1.0 mi); a four-component soluti
 |   `-- final_dataset/      extracted_measures.shp, final_dataset.*, user_selection.json (generated; not tracked)
 |-- output/pca_diagnostics/ figures and the neighborhood map written by pca_analysis.py (generated; not tracked)
 |-- src/
-|   |-- run_analysis.py              stage 1 entry point and settings (buffer_list_mile, input paths)
+|   |-- run_analysis.py              stage 1 entry point: prompts or flags for the inputs, DEFAULTS
 |   |-- street_network_processor.py  StreetNetworkProcessor: network construction and measures
-|   |-- user_inputs.py               interactive prompts and user_selection.json helpers
+|   |-- user_inputs.py               prompts, input validation and user_selection.json helpers
 |   |-- common.py                    component analysis: factor_loading_matrices, explore_pca, select_representatives
 |   |-- final_dataset.py             assembly of the final dataset and its data dictionary
 |   |-- pca_analysis.ipynb           stage 2 and 3, notebook version

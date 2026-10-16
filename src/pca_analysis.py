@@ -5,6 +5,7 @@ Script version of pca_analysis.ipynb: the same steps and the same shared functio
     python pca_analysis.py [--no-windows] [--no-distribution-plots]
 
 Reads   ../data/final_dataset/extracted_measures.shp   (written by run_analysis.py)
+        ../data/final_dataset/user_selection.json      (inputs and choices made in run_analysis.py)
 Writes  ../data/final_dataset/final_dataset.shp / .csv  (the modeling dataset: the repository's end product)
         ../data/final_dataset/final_dataset_dictionary.csv  (what each column is and how to use it)
         ../data/final_dataset/user_selection.json      (all interactive choices, for the record)
@@ -35,7 +36,7 @@ if args.no_windows:
 import matplotlib.pyplot as plt
 import numpy as np, pandas as pd, geopandas as gpd, seaborn as sns, folium
 
-from run_analysis import buffer_list_mile
+from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS
 from user_inputs import load_selection, update_selection, select_pca_method
 from common import explore_pca, select_representatives, FigureSaver
 from final_dataset import assemble_final_dataset, write_final_dataset
@@ -64,18 +65,11 @@ def section(title):
 # 1. Inputs: the variable selection made in run_analysis.py and the measures table
 # --------------------------------------------------------------------------
 section("1. Loading inputs")
-crime_col, ctrl_vars = load_selection()
+selection = load_selection()                  # inputs and choices recorded by run_analysis.py
+crime_col, ctrl_vars, buffer_list_mile = selection["crime_col"], selection["ctrl_vars"], selection["buffer_list_mile"]
 gdf = gpd.read_file("../data/final_dataset/extracted_measures.shp")
 
-NETWORK_METRICS = ["int_den", "st_den", "nd_deg", "cl_cof", "shtpth", "bt_cnt", "cl_cnt", "pr_cnt"]
-
-
-def bufname(b):
-    # Same naming rule used in StreetNetworkProcessor.buffer_code
-    return str(b).replace(".", "") if (b < 1 and b != 0.1) else str(int(b * 10))
-
-
-final_list_net = [f"{m}{bufname(b)}" for b in buffer_list_mile for m in NETWORK_METRICS]
+final_list_net = StreetNetworkProcessor.measure_columns(buffer_list_mile)   # same naming rule as stage 1
 
 missing_cols = [c for c in final_list_net + ctrl_vars if c not in gdf.columns]
 if missing_cols:
