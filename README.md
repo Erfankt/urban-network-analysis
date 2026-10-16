@@ -111,7 +111,7 @@ python pca_analysis.py                 # or open pca_analysis.ipynb in Jupyter
 
 Steps:
 
-1. Load `extracted_measures.shp` and the saved variable selection; an interactive map of the neighborhoods (HTML), descriptive statistics, missing-value check and per-variable distribution plots.
+1. Load `extracted_measures.shp` and the saved variable selection; an interactive map of the neighborhoods (HTML), descriptive statistics, a missing-value check and per-variable distribution plots. The component analysis cannot run on missing values (the correlation matrix is undefined), so the run stops at the check if any selected variable has them, listing the variables and the neighborhoods concerned. Fix them in the neighborhoods layer (fill or drop; the paper's choices are described under *Reproducing the Charlotte study*), rerun stage 1 with `--reuse`, which takes seconds because the network measures come from the checkpoints, and run stage 2 again.
 2. **Extraction method** (prompt): `principal` (principal components, as the paper describes the procedure), `minres` (minimum-residual common factor analysis: the `factor_analyzer` default, which is what the original computation ran) or `ml`. Rotation is varimax, as in the paper.
 3. **Street-network block**, 40 measures: (a) *overview*, independent of the number of components: correlation heatmap, scree plot of all eigenvalues with the Kaiser line and cumulative variance, eigenvalue table and rule-of-thumb counts; (b) *inspect*: type a number of components to see the full report for that solution (unrotated and rotated loadings as tables and heatmaps, variance explained, communalities, salient loadings per component, cross-loading variables, variables captured by no component, low communalities), as often as needed; (c) *final choice* of the number to retain; (d) **representative measures**: one original measure per retained component, chosen from the top-loading candidates (with their cross-loadings shown). Following the paper, these measures, not the component scores, are the street-network regressors, entered after a log(x + 1) transformation, which keeps the coefficients in interpretable units and preserves the buffer scale of each measure.
 4. **Socio-spatial block**: the same overview, inspect and final choice; the retained component scores are the controls.
@@ -173,6 +173,17 @@ The 16 control variables of the paper (Table 4), with the field names used in th
 | `sinfamsize` | Mean heated square footage of single-family units |
 | `salesprice` | Mean sales price of single-family dwellings, condominiums and townhomes (two fiscal years) |
 | `heatedarea` | Total heated square footage of all structures |
+
+The Quality of Life Explorer export has no value for some variables in 23 of the 371 NPAs (40 cells in all), where there are no single-family homes or sales to report, or the Census estimate is suppressed. The paper's modelling table carries the following values in those cells, and the neighborhoods layer used with this repository has them filled in the same way:
+
+| Variable | NPAs | Value |
+|---|---|---|
+| `sinfamage` | 15 | 0 (no single-family units) |
+| `sinfamsize` | 13 | 0 (no single-family units) |
+| `salesprice` | 3 | 0 (no sales) |
+| `sinfamrate`, `home_own` | 1 each | 0 |
+| `income` | 6 (ids 28, 193, 247, 293, 294, 315) | 250001, 250001, 50000, 36786, 51714, 56549 (ACS estimates; 250001 is the top-coded value) |
+| `race_white` | 1 (id 380) | 77.8 |
 
 Choices made in the paper: five buffers (0.1 to 1.0 mi); a four-component solution for the 40 network measures (74.1% of their variance), represented by intersection density, average clustering coefficient and average shortest path at 0.75 mi and average betweenness centrality at 0.5 mi; a nine-component solution for the 16 controls. The paper describes the reduction as PCA with varimax rotation; the original computation used `factor_analyzer` with its default `minres` extraction and a varimax rotation, which is why both options are offered.
 

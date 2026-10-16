@@ -238,6 +238,37 @@ def factor_loading_matrices(
 #   3. explore_pca   - the interactive loop: overview -> inspect n's -> final n
 # =============================================================================
 
+def report_missing(data, network_vars, ctrl_vars, id_col="id"):
+    """
+    Lists the missing values among the selected variables (count per variable, then the
+    affected neighborhoods with the variables they lack) and says how to deal with them.
+    Returns the per-variable counts: empty when nothing is missing. The component analysis
+    cannot run on missing values, so the callers stop when the result is not empty.
+    """
+    variables = list(network_vars) + list(ctrl_vars)
+    counts = data[variables].isna().sum()
+    counts = counts[counts > 0]
+    if counts.empty:
+        print("No missing values in any of the selected variables.")
+        return counts
+    print(f"Missing values in {len(counts)} variable(s):")
+    print(counts.to_string())
+    rows = data[variables].isna().any(axis=1)
+    print(f"\n{int(rows.sum())} neighborhood(s) affected:")
+    for _, r in data.loc[rows].iterrows():
+        print(f"  {id_col} {r[id_col]}: " + ", ".join(v for v in variables if pd.isna(r[v])))
+    print("\nThe component analysis cannot run on missing values: the correlation matrix is undefined.")
+    if any(v in ctrl_vars for v in counts.index):
+        print("- Control variables: fill or drop the values in the neighborhoods layer (the source data), "
+              "then rerun stage 1 with `python run_analysis.py --reuse`; the network measures come back "
+              "from the checkpoints in seconds, only the attributes are re-attached.")
+    if any(v in network_vars for v in counts.index):
+        print("- Network measures: these neighborhoods have no usable street network at that buffer "
+              "(no segment within the buffer, or fewer than two nodes). Check the streets layer around them "
+              "or remove them from the neighborhoods layer, then rerun stage 1.")
+    return counts
+
+
 def _eigenvalue_table(eigenvalues):
     pct = eigenvalues / eigenvalues.sum() * 100
     return pd.DataFrame({

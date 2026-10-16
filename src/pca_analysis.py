@@ -38,7 +38,7 @@ import numpy as np, pandas as pd, geopandas as gpd, seaborn as sns, folium
 
 from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS
 from user_inputs import load_selection, update_selection, select_pca_method
-from common import explore_pca, select_representatives, FigureSaver
+from common import explore_pca, select_representatives, FigureSaver, report_missing
 from final_dataset import assemble_final_dataset, write_final_dataset
 
 pd.set_option("display.max_columns", None)
@@ -113,14 +113,8 @@ section("3. Descriptive statistics")
 print(gdf[final_list_net + ctrl_vars].describe().T.round(3).to_string())
 
 section("4. Missing values")
-missing_values = gdf[final_list_net + ctrl_vars].isnull().sum()
-missing_values = missing_values[missing_values > 0]
-if missing_values.empty:
-    print("No missing values in any feature")
-else:
-    print(missing_values.to_string())
-    print("\nWARNING: missing values must be handled before the component analysis "
-          "(factor_analyzer imputes the median by default).")
+if not report_missing(gdf, final_list_net, ctrl_vars).empty:
+    sys.exit("\nStopped before the component analysis: handle the missing values listed above first.")
 
 # --------------------------------------------------------------------------
 # 5. Distribution diagnostics per variable (one PNG each: histogram, boxplot, points)
