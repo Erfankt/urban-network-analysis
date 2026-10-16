@@ -14,6 +14,8 @@ __pycache__/
 *.sbn
 *.sbx
 *.shp.xml
+# ArcGIS metadata written next to the input layers
+data/**/*.xml
 
 # ============================================
 # IDEs
@@ -31,3 +33,7 @@ Thumbs.db
 # Data Output
 # ============================================
 data/processed/
+data/checkpoints/
+output/
+data/final_dataset/*
+!data/final_dataset/.gitkeep

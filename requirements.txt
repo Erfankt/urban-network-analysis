@@ -1,7 +1,18 @@
+# Stage 1: street-network measures
 geopandas
+shapely
 networkx
 numpy
 pandas
-shapely
-tqdm
 scipy
+tqdm
+
+# Stage 2/3: component analysis and final dataset
+factor_analyzer
+scikit-learn<1.6      # factor_analyzer 0.5.x breaks with scikit-learn >= 1.6
+matplotlib
+seaborn
+folium
+
+# Notebook version of stage 2 only
+jupyter
