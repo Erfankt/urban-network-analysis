@@ -18,6 +18,7 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
   1. python run_analysis.py      - input files, buffer distances, dependent variable and
                                    controls (prompts with defaults, or command-line flags)
                                  - build the network, measure 8 metrics x 5 buffers per neighborhood
+                                   (checkpointed in data/checkpoints/: an interrupted run resumes)
                                  -> data/final_dataset/extracted_measures.shp
             |
             v
@@ -46,7 +47,7 @@ pip install -r requirements.txt
 
 ## Input data
 
-The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and a unique `id` column.
+The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and a unique `id` column.
 
 | File | Content | Requirements |
 |---|---|---|
@@ -70,6 +71,7 @@ The same answers can be given up front, for scripted or repeated runs; whatever 
 python run_analysis.py --streets ../data/streetnetwork/streets.shp --neighborhoods ../data/neighborhoods/neighborhoods.shp \
                        --buffers 0.1,0.25,0.5,0.75,1.0 --crime propcrimct --controls bachdg,med_age,emp
 python run_analysis.py --reuse        # rerun with the previously saved answers, no questions
+python run_analysis.py --recompute    # ignore the checkpoints (see below) and measure every buffer again
 ```
 
 The answers are saved to `data/final_dataset/user_selection.json`; on the next run the script offers to reuse them. A new setup starts a fresh file, so the stage-2 choices are made again on the new inputs.
@@ -94,7 +96,9 @@ It then runs `StreetNetworkProcessor` (`src/street_network_processor.py`):
 
 Column names are `<metric code><buffer code>`, where the buffer code is the distance in miles with the decimal point removed: `1` (0.1 mi), `025`, `05`, `075`, `10` (1.0 mi); e.g. `int_den075`. The rule is implemented once, in `StreetNetworkProcessor.buffer_code()`, and keeps field names within the 10-character limit of shapefiles. Output: `data/final_dataset/extracted_measures.shp`, the neighborhoods layer with the measure columns appended (40 for the five default buffers).
 
-The run can take a while for a city-sized network: the centrality and shortest-path measures are computed for every node of every local network, and progress bars report each step.
+The run can take a while for a city-sized network: the centrality and shortest-path measures are computed for every node of every local network, and progress bars report each step. The larger buffers take disproportionately longer, since these measures grow faster than the size of the local network.
+
+**Checkpoints and resuming.** The measures are saved as they are produced, not at the end: each buffer has a CSV in `data/checkpoints/<fingerprint>/` to which a neighborhood's row is appended the moment it has been measured. A run that stops for any reason (an error, Ctrl+C, the computer going to sleep) therefore loses at most the neighborhood in progress; `python run_analysis.py --reuse` continues from there, skipping the neighborhoods and buffers already done. The checkpoints are keyed by a fingerprint of the street and neighborhood geometries (`inputs.json` in the folder says which files they came from), so a run with other layers never reuses them by mistake, while a run with the same layers reuses them even if the attributes changed: changing the crime column or the control variables, or adding a buffer distance, costs only the new work. `extracted_measures.shp` is assembled from the checkpoints at the end of every run and overwritten, since rebuilding it takes seconds. `--recompute` ignores the checkpoints of the buffers in the run (after a change to the measure code, say); deleting the folder has the same effect. The folder is not tracked by git.
 
 ## Stage 2: component analysis (`src/pca_analysis.ipynb` or `src/pca_analysis.py`)
 
@@ -179,6 +183,7 @@ Choices made in the paper: five buffers (0.1 to 1.0 mi); a four-component soluti
 |-- data/
 |   |-- streetnetwork/      streets.shp (input; not tracked)
 |   |-- neighborhoods/      neighborhoods.shp (input; not tracked)
+|   |-- checkpoints/        one folder per pair of input layers, one CSV of measures per buffer (generated; not tracked)
 |   `-- final_dataset/      extracted_measures.shp, final_dataset.*, user_selection.json (generated; not tracked)
 |-- output/pca_diagnostics/ figures and the neighborhood map written by pca_analysis.py (generated; not tracked)
 |-- src/

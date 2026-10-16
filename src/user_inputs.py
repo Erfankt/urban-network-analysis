@@ -13,7 +13,7 @@ missing ones are asked for.
 """
 import os, json
 import geopandas as gpd
-from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS, align_neighborhoods_crs
+from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS, align_neighborhoods_crs, crs_label
 
 SELECTION_PATH = "../data/final_dataset/user_selection.json"
 MAX_FIELD_LEN = 10          # shapefile field-name limit
@@ -119,7 +119,7 @@ def select_input_files(defaults, preset=None):
         if note:
             print(f"  note: {note}")
         print(f"  streets: {len(edges)} segments | neighborhoods: {len(neighborhoods)} polygons "
-              f"| CRS: {neighborhoods.crs.to_string()}")
+              f"| CRS: {crs_label(neighborhoods.crs)}")
         return streets, nbhd, neighborhoods
 
 

@@ -1,4 +1,4 @@
-import os, warnings, numpy as np, pandas as pd, geopandas as gpd, networkx as nx, scipy
+import os, io, csv, json, time, hashlib, warnings, numpy as np, pandas as pd, geopandas as gpd, networkx as nx, scipy
 from shapely.geometry import Point, LineString, MultiLineString
 from tqdm import tqdm
 warnings.filterwarnings("ignore")
@@ -6,20 +6,43 @@ warnings.filterwarnings("ignore")
 # The eight configuration measures, in output order (see README for definitions)
 NETWORK_METRICS = ["int_den", "st_den", "nd_deg", "cl_cof", "shtpth", "bt_cnt", "cl_cnt", "pr_cnt"]
 
+FINAL_DIR = "../data/final_dataset"
+CHECKPOINT_DIR = "../data/checkpoints"   # one sub-folder per pair of input layers, one CSV per buffer
+SAME_CRS_TOLERANCE = 0.1                 # layer units (feet): two CRS definitions that move no coordinate
+                                         # by more than this are the same system written differently
+
+
+def crs_label(crs):
+    """Short readable name of a CRS, e.g. 'EPSG:2264 (NAD83 / North Carolina (ftUS))'."""
+    if crs is None:
+        return "none"
+    code = crs.to_epsg()
+    name = crs.name or crs.to_string()
+    return f"EPSG:{code} ({name})" if code else name
+
 
 def align_neighborhoods_crs(edges, neighborhoods):
     """
     Put the neighborhoods in the CRS of the streets layer.
 
     The streets define the working CRS (all lengths are measured on them); the neighborhoods
-    are the small layer, so they are the one reprojected when the two differ.
+    are the small layer, so they are the one reprojected when the two differ. Two definitions
+    of the same system (an EPSG code vs. the WKT written by desktop GIS software, say) are
+    recognised by reprojecting and checking that no coordinate moved: then the geometry is
+    kept as it is and only the CRS definition of the streets is adopted.
     Returns (neighborhoods, note); note is None when nothing had to change.
     """
     if edges.crs is None or neighborhoods.crs is None or edges.crs == neighborhoods.crs:
         return neighborhoods, None
-    note = (f"neighborhoods reprojected from {neighborhoods.crs.to_string()} "
-            f"to the streets CRS {edges.crs.to_string()}")
-    return neighborhoods.to_crs(edges.crs), note
+    moved = neighborhoods.to_crs(edges.crs)
+    shift = float(np.nanmax(np.abs(moved.bounds.to_numpy() - neighborhoods.bounds.to_numpy())))
+    if shift < SAME_CRS_TOLERANCE:
+        note = (f"the neighborhoods CRS is the streets CRS written differently "
+                f"(no coordinate moves by more than {shift:.3g} ft); kept as is")
+        return neighborhoods.set_crs(edges.crs, allow_override=True), note
+    note = (f"neighborhoods reprojected from {crs_label(neighborhoods.crs)} "
+            f"to the streets CRS {crs_label(edges.crs)}")
+    return moved, note
 
 
 class StreetNetworkProcessor:
@@ -233,11 +256,18 @@ class StreetNetworkProcessor:
         """Names of the measure columns written for these buffers, in output order."""
         return [f"{m}{cls.buffer_code(b)}" for b in buffer_list_mile for m in NETWORK_METRICS]
 
-    def process_buffers(self, buffer_list_mile):
+    def process_buffers(self, buffer_list_mile, recompute=False):
         """
-        Controls the analysis flow by iterating through a list of buffer distances.
+        Measures every buffer in turn, then assembles the output table.
+
+        The measures are checkpointed as they are produced: one CSV per buffer in
+        data/checkpoints/<input fingerprint>/, to which each neighborhood's row is appended as
+        soon as it has been measured. A run that stops (error, Ctrl+C, power) therefore resumes
+        where it was, and a buffer already complete for the same inputs is not computed again.
+        recompute=True ignores the existing checkpoints of the buffers in this run.
         """
-        results = {}
+        checkpoint_dir = self._checkpoint_dir()
+        print(f"Checkpoints: {checkpoint_dir}")
 
         for self.buffer_mile in buffer_list_mile:
             self.buffer_distance_feet = self.buffer_mile * 5280  # Convert miles to feet
@@ -245,56 +275,131 @@ class StreetNetworkProcessor:
 
             print(f"\n--- Processing Buffer: {self.buffer_mile} miles ({self.buffer_mile_name}) ---")
 
-            npa_gdf_results = self._process_single_buffer()
-            results[self.buffer_mile_name] = npa_gdf_results
+            self._process_single_buffer(self._checkpoint_path(checkpoint_dir, self.buffer_mile), recompute)
 
-        self._merge_results(results)
+        self._merge_results(buffer_list_mile, checkpoint_dir)
 
-    def _process_single_buffer(self):
+    # --------------------------------------------------------------------------
+    ## Checkpoints
+    # --------------------------------------------------------------------------
+
+    def _input_fingerprint(self):
         """
-        Applies buffering, extracts local networks, and calculates measures
-        for all NPAs at the current buffer distance, showing progress with tqdm.
+        Short hash of what the network measures depend on: the street geometries and the
+        neighborhood ids and geometries (in the working CRS). Attribute edits, e.g. a corrected
+        control variable, leave it unchanged, so they do not invalidate the checkpoints; other
+        street or neighborhood geometries get a checkpoint folder of their own.
         """
+        h = hashlib.sha1()
+        h.update(b"".join(w for w in self.source_edges.geometry.to_wkb() if w is not None))
+        h.update("|".join(self.NPA_shape["id"].astype(str)).encode("utf-8"))
+        h.update(b"".join(w for w in self.NPA_shape.geometry.to_wkb() if w is not None))
+        return h.hexdigest()[:10]
 
-        # 1. Prepare NPA polygons: buffer them
-        buffered_NPA = self.NPA_shape.copy()
-        buffered_NPA['geometry'] = buffered_NPA['geometry'].apply(
-            lambda geom: geom.buffer(self.buffer_distance_feet)
-        )
+    def _checkpoint_dir(self):
+        """Checkpoint folder for the current inputs, with an inputs.json saying what they were."""
+        path = os.path.join(CHECKPOINT_DIR, self._input_fingerprint())
+        os.makedirs(path, exist_ok=True)
+        info = os.path.join(path, "inputs.json")
+        if not os.path.exists(info):
+            with open(info, "w", encoding="utf-8") as f:
+                json.dump({
+                    "streets": self.source_edges_path,
+                    "neighborhoods": self.NPA_shape_path,
+                    "segments": int(len(self.source_edges)),
+                    "neighborhood_count": int(len(self.NPA_shape)),
+                    "crs": crs_label(self.source_edges.crs),
+                    "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "note": "Street-network measures computed from these inputs: one CSV per buffer, one "
+                            "row per neighborhood, written as each neighborhood is measured. The folder "
+                            "name is a fingerprint of the street and neighborhood geometries, so other "
+                            "inputs get their own folder. Delete the folder, or run with --recompute, "
+                            "to measure from scratch.",
+                }, f, indent=2)
+        return path
 
-        results_list = []
+    @classmethod
+    def _checkpoint_path(cls, checkpoint_dir, buffer_mile):
+        return os.path.join(checkpoint_dir, f"measures_{cls.buffer_code(buffer_mile)}.csv")
 
-        # 🚨 TQDM INTEGRATION: Wrap the iteration over NPA rows
-        buffer_desc = f"Analyzing NPAs ({self.buffer_mile} mi)"
+    @staticmethod
+    def _read_checkpoint(path, columns):
+        """
+        Rows already measured for one buffer (an empty table when there is no checkpoint).
+        A last line left incomplete by an interruption (no newline) is dropped.
+        """
+        if not os.path.exists(path):
+            return pd.DataFrame(columns=columns)
+        with open(path, "rb") as f:
+            raw = f.read()
+        if raw and not raw.endswith(b"\n"):
+            raw = raw[:raw.rfind(b"\n") + 1]
+        if not raw.strip():
+            return pd.DataFrame(columns=columns)
+        df = pd.read_csv(io.BytesIO(raw), dtype={"id": str})
+        if list(df.columns) != columns:
+            raise ValueError(f"{path} has columns {list(df.columns)}, expected {columns}; "
+                             "delete the file or run with --recompute")
+        return df.drop_duplicates("id", keep="last")
 
-        for idx, polygon in tqdm(buffered_NPA.iterrows(), total=len(buffered_NPA), desc=buffer_desc):
-            NPA_id = polygon['id']
+    def _process_single_buffer(self, checkpoint_path, recompute=False):
+        """
+        Buffers the neighborhoods, extracts each local network and measures it at the current
+        buffer distance, appending every neighborhood's row to the checkpoint as soon as it is
+        done; neighborhoods already in the checkpoint are skipped (unless recompute).
+        """
+        columns = ["id"] + [f"{m}{self.buffer_mile_name}" for m in NETWORK_METRICS]
+        done = pd.DataFrame(columns=columns) if recompute else self._read_checkpoint(checkpoint_path, columns)
+        all_ids = self.NPA_shape["id"].astype(str)
+        todo = self.NPA_shape[~all_ids.isin(set(done["id"]))]
 
-            # --- Step 3: Extract Local Network ---
-            edge_NPA = self.edges_version_2[self.edges_version_2.intersects(polygon.geometry)].copy()
+        if len(done):
+            print(f"Checkpoint: {len(done)} of {len(all_ids)} neighborhoods already measured, "
+                  f"{len(todo)} to go.")
+        if todo.empty:
+            print(f"Results for buffer {self.buffer_mile} taken from the checkpoint.")
+            return
 
-            if edge_NPA.empty:
-                measures = {f"{m}{self.buffer_mile_name}": np.nan for m in NETWORK_METRICS}
-                results_list.append({'id': NPA_id, **measures})
-                continue
+        # 1. Prepare NPA polygons: buffer the ones still to do
+        buffered_NPA = todo.copy()
+        buffered_NPA['geometry'] = buffered_NPA['geometry'].buffer(self.buffer_distance_feet)
 
-            nodes_NPA, edge_NPA = self._extract_local_elements(edge_NPA)
+        # 2. Rewrite the checkpoint cleanly (header + rows already done), then append as we go
+        with open(checkpoint_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f, lineterminator="\n")
+            writer.writerow(columns)
+            for row in done[columns].itertuples(index=False):
+                writer.writerow(["" if (isinstance(v, float) and np.isnan(v)) else v for v in row])
+            f.flush()
 
-            # --- Step 4: Extract Largest Component ---
-            G_local = self._create_networkx_graph(nodes_NPA, edge_NPA)
-            G_main, nodes_main, edges_main = self._extract_largest_component(G_local, nodes_NPA, edge_NPA)
+            buffer_desc = f"Analyzing NPAs ({self.buffer_mile} mi)"
+            for idx, polygon in tqdm(buffered_NPA.iterrows(), total=len(buffered_NPA), desc=buffer_desc):
+                NPA_id = polygon['id']
 
-            # --- Step 5: Calculate Network Measures ---
-            measures = self._calculate_network_measures(G_main, polygon, nodes_main, edges_main)
-            results_list.append({'id': NPA_id, **measures})
+                # --- Step 3: Extract Local Network ---
+                edge_NPA = self.edges_version_2[self.edges_version_2.intersects(polygon.geometry)].copy()
 
-        # Save buffer-specific results
-        npa_gdf = self.NPA_shape[['id', 'geometry']].merge(
-            pd.DataFrame(results_list), on='id', how='left'
-        )
-        print(f"Results for buffer {self.buffer_mile} generated successfully!")
+                if edge_NPA.empty:
+                    measures = {f"{m}{self.buffer_mile_name}": np.nan for m in NETWORK_METRICS}
+                else:
+                    nodes_NPA, edge_NPA = self._extract_local_elements(edge_NPA)
 
-        return npa_gdf.drop(columns=['geometry'])
+                    # --- Step 4: Extract Largest Component ---
+                    G_local = self._create_networkx_graph(nodes_NPA, edge_NPA)
+                    G_main, nodes_main, edges_main = self._extract_largest_component(G_local, nodes_NPA, edge_NPA)
+
+                    # --- Step 5: Calculate Network Measures ---
+                    measures = self._calculate_network_measures(G_main, polygon, nodes_main, edges_main)
+
+                # --- Checkpoint: the row is on disk before the next neighborhood starts ---
+                values = [measures[c] for c in columns[1:]]
+                writer.writerow([str(NPA_id)] + ["" if (isinstance(v, float) and np.isnan(v)) else v
+                                                 for v in values])
+                f.flush()
+                os.fsync(f.fileno())
+
+        print(f"Results for buffer {self.buffer_mile} generated successfully! "
+              f"({len(todo)} neighborhoods measured now, {len(done)} from the checkpoint)")
 
         # --------------------------------------------------------------------------
 
@@ -444,19 +549,27 @@ class StreetNetworkProcessor:
     ## Final Step: Merge Results
     # --------------------------------------------------------------------------
 
-    def _merge_results(self, results):
+    def _merge_results(self, buffer_list_mile, checkpoint_dir):
         """
-        Merges the results from all processed buffer sizes into one final
-        Analytical Base Table (ABT) shapefile.
+        Assembles the final Analytical Base Table (ABT) shapefile from the checkpoints of
+        the requested buffers: the neighborhoods layer with the measure columns appended.
         """
-
         npa_merged = self.NPA_shape.copy()
+        key = npa_merged["id"].astype(str)
 
-        for _, df in results.items():
-            npa_merged = npa_merged.merge(df, on='id', how='left')
+        for buffer_mile in buffer_list_mile:
+            code = self.buffer_code(buffer_mile)
+            columns = ["id"] + [f"{m}{code}" for m in NETWORK_METRICS]
+            df = self._read_checkpoint(self._checkpoint_path(checkpoint_dir, buffer_mile), columns)
+            missing = set(key) - set(df["id"])
+            if missing:
+                raise RuntimeError(f"buffer {buffer_mile} mi: {len(missing)} neighborhoods are not in the "
+                                   "checkpoint; run again to complete it")
+            df = df.set_index("id").reindex(key)
+            for c in columns[1:]:
+                npa_merged[c] = df[c].to_numpy(dtype=float)
 
-        final_dir = "../data/final_dataset"
-        os.makedirs(final_dir, exist_ok=True)
-        final_path = os.path.join(final_dir, "extracted_measures.shp")
+        os.makedirs(FINAL_DIR, exist_ok=True)
+        final_path = os.path.join(FINAL_DIR, "extracted_measures.shp")
         npa_merged.to_file(final_path)
         print(f"\nFinal analytical base table written to {final_path}")
