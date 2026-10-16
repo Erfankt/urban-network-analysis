@@ -46,7 +46,7 @@ pip install -r requirements.txt
 
 ## Input data
 
-The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). Both layers must share the same **projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The setup checks both layers before anything runs: projected CRS in feet, identical CRS, line and polygon geometries, and a unique `id` column.
+The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and a unique `id` column.
 
 | File | Content | Requirements |
 |---|---|---|

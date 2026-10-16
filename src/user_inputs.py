@@ -13,7 +13,7 @@ missing ones are asked for.
 """
 import os, json
 import geopandas as gpd
-from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS
+from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS, align_neighborhoods_crs
 
 SELECTION_PATH = "../data/final_dataset/user_selection.json"
 MAX_FIELD_LEN = 10          # shapefile field-name limit
@@ -66,15 +66,17 @@ def check_layers(edges, neighborhoods):
     for name, gdf in (("streets", edges), ("neighborhoods", neighborhoods)):
         if gdf.crs is None:
             problems.append(f"{name}: no coordinate reference system defined")
-        elif not gdf.crs.is_projected:
-            problems.append(f"{name}: CRS is not projected ({gdf.crs.to_string()})")
+    # The streets define the working CRS; when the layers differ, the neighborhoods are
+    # reprojected to it (align_neighborhoods_crs), so only the streets CRS has to be suitable.
+    if edges.crs is not None:
+        if not edges.crs.is_projected:
+            problems.append(f"streets: CRS is not projected ({edges.crs.to_string()}); "
+                            "reproject the streets to a projected CRS in US feet")
         else:
-            unit = (gdf.crs.axis_info[0].unit_name or "").lower()
+            unit = (edges.crs.axis_info[0].unit_name or "").lower()
             if "foot" not in unit and "feet" not in unit:
-                problems.append(f"{name}: CRS unit is '{unit}'; the pipeline assumes US feet "
+                problems.append(f"streets: CRS unit is '{unit}'; the pipeline assumes US feet "
                                 "(buffers in miles, areas in acres)")
-    if edges.crs is not None and neighborhoods.crs is not None and edges.crs != neighborhoods.crs:
-        problems.append("the two layers have different CRS; reproject one of them")
 
     if "id" not in neighborhoods.columns:
         problems.append("neighborhoods: no 'id' column (unique neighborhood identifier)")
@@ -113,6 +115,9 @@ def select_input_files(defaults, preset=None):
                 print(f"     - {p}")
             preset = {}
             continue
+        neighborhoods, note = align_neighborhoods_crs(edges, neighborhoods)
+        if note:
+            print(f"  note: {note}")
         print(f"  streets: {len(edges)} segments | neighborhoods: {len(neighborhoods)} polygons "
               f"| CRS: {neighborhoods.crs.to_string()}")
         return streets, nbhd, neighborhoods

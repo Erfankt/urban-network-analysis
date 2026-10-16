@@ -7,6 +7,21 @@ warnings.filterwarnings("ignore")
 NETWORK_METRICS = ["int_den", "st_den", "nd_deg", "cl_cof", "shtpth", "bt_cnt", "cl_cnt", "pr_cnt"]
 
 
+def align_neighborhoods_crs(edges, neighborhoods):
+    """
+    Put the neighborhoods in the CRS of the streets layer.
+
+    The streets define the working CRS (all lengths are measured on them); the neighborhoods
+    are the small layer, so they are the one reprojected when the two differ.
+    Returns (neighborhoods, note); note is None when nothing had to change.
+    """
+    if edges.crs is None or neighborhoods.crs is None or edges.crs == neighborhoods.crs:
+        return neighborhoods, None
+    note = (f"neighborhoods reprojected from {neighborhoods.crs.to_string()} "
+            f"to the streets CRS {edges.crs.to_string()}")
+    return neighborhoods.to_crs(edges.crs), note
+
+
 class StreetNetworkProcessor:
     """
     A unified class to manage the entire workflow for urban street network analysis:
@@ -46,17 +61,19 @@ class StreetNetworkProcessor:
         if "id" not in self.NPA_shape.columns:
             raise ValueError("Neighborhood layer must have a unique identifier column named 'id'.")
 
-        # 3. Edges and polygons must share a projected CRS (buffers are in feet)
+        # 3. Edges and polygons must share a projected CRS (buffers are in feet);
+        #    the neighborhoods are reprojected to the streets CRS when they differ
         self._validate_crs()
 
         print(f"Base data loaded: {len(self.source_edges)} edges, {len(self.NPA_shape)} neighborhoods.")
         
     def _validate_crs(self):
-        if self.source_edges.crs != self.NPA_shape.crs:
-            raise ValueError(
-                f"CRS mismatch:\nEdges: {self.source_edges.crs}\nNPA: {self.NPA_shape.crs}\n"
-                "Please reproject before running."
-            )
+        for name, gdf in (("Street", self.source_edges), ("Neighborhood", self.NPA_shape)):
+            if gdf.crs is None:
+                raise ValueError(f"{name} layer has no coordinate reference system defined.")
+        self.NPA_shape, note = align_neighborhoods_crs(self.source_edges, self.NPA_shape)
+        if note:
+            print(f"Note: {note}")
 
     def _as_lines(self, geom):
         """Return a list of LineStrings for a geometry (LineString/MultiLineString)."""
