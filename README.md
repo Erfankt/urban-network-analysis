@@ -37,13 +37,32 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
 
 ## Setup
 
-Python 3.11 is recommended (the paper's computations used it). Install the dependencies with
+Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder. It is created and filled once: if `.venv` already exists with the requirements installed (the check below tells), skip steps 1 and 3 and only activate it in each new terminal.
+
+1. Create the environment (first time only):
+
+```bash
+python -m venv .venv
+```
+
+2. Activate it (in every new terminal; the prompt then starts with `(.venv)`):
+
+```bash
+# Windows, Command Prompt
+.venv\Scripts\activate
+# Windows, PowerShell
+.venv\Scripts\Activate.ps1
+# macOS / Linux
+source .venv/bin/activate
+```
+
+3. Install the dependencies (first time, or after `requirements.txt` changes):
 
 ```bash
 pip install -r requirements.txt
 ```
 
-`requirements.txt` pins `scikit-learn<1.6` because `factor_analyzer` 0.5.x fails with newer scikit-learn releases. Jupyter is only needed for the notebook version of stage 2.
+To see whether an existing environment is already complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"`: if it prints a version below 1.6 without an error, skip step 3. `requirements.txt` pins `scikit-learn<1.6` because `factor_analyzer` 0.5.x fails with newer scikit-learn releases, so an error such as `check_array() got an unexpected keyword argument 'force_all_finite'` means the script is running outside this environment, with a newer scikit-learn: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment.
 
 ## Input data
 
