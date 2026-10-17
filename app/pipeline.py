@@ -254,6 +254,8 @@ def layer_profile(layers, info):
 
 
 # ---- the map -----------------------------------------------------------------------------------------------
+BLANK_TILE = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+
 BASEMAPS = [   # (name, tile URL, attribution); the first is shown at first, the others are offered in the control
     ("OpenStreetMap", "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
      "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors"),
@@ -323,6 +325,9 @@ def layers_map_html(neighborhoods, edges=None, id_col="id", neighborhood_columns
                    prefer_canvas=True, control_scale=True)
     for i, (name, url, attr) in enumerate(BASEMAPS):
         folium.TileLayer(tiles=url, name=name, attr=attr, show=(i == 0), max_zoom=19, control=True).add_to(m)
+    # "No basemap": a blank (transparent) base layer on a white background, so only the data shows
+    folium.TileLayer(tiles=BLANK_TILE, name="No basemap", attr="no basemap", show=False, max_zoom=19, control=True).add_to(m)
+    m.get_root().html.add_child(folium.Element("<style>.leaflet-container{background:#fff}</style>"))
 
     folium.GeoJson(nb_fc, name=f"Neighborhoods ({len(nb_fc['features'])})", show=True,
                    style_function=lambda f: {"color": "#2a78d6", "weight": 2, "fillColor": "#2a78d6", "fillOpacity": 0.12},
