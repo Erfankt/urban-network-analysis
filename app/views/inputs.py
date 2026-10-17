@@ -1,4 +1,4 @@
-"""Page 1: the two input layers (from the data folder or from this computer), the neighborhood identifier
+"""Section 1: the two input layers (from the data folder or from this computer), the neighborhood identifier
 column, the coordinate reference systems, a look at each dataset and a map of both."""
 import html
 import os
@@ -17,8 +17,7 @@ UPLOAD_HELP = ("Select the parts of one shapefile together (.shp, .shx, .dbf, .p
                "or one .gpkg / .geojson. Saving copies the files into the data folder of the repository "
                "(data/streetnetwork/ or data/neighborhoods/), where the pipeline reads them; the layer then "
                "appears in the Data folder list.")
-BAR = "#2a78d6"            # the one hue of the two single-series charts
-INK_2 = "#52514e"
+BAR = "#0e8a7f"            # the one hue of the two single-series charts (the app's teal)
 TILE_CSS = """<style>
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;margin:4px 0 8px}
 .tile .lbl{font-size:.82rem;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -122,10 +121,9 @@ def _hist_chart(h, x_title, y_title):
                        "to": h["end"]})
     return (alt.Chart(df)
             .mark_bar(color=BAR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
-            .encode(x=alt.X("start:Q", title=x_title, axis=alt.Axis(grid=False, format="~s", labelColor=INK_2, titleColor=INK_2)),
+            .encode(x=alt.X("start:Q", title=x_title, axis=alt.Axis(grid=False, format="~s")),
                     x2="end:Q",
-                    y=alt.Y("count:Q", title=None, axis=alt.Axis(tickCount=4, format="~s", gridColor="#e9e9e6",
-                                                                   domain=False, labelColor=INK_2, titleColor=INK_2)),
+                    y=alt.Y("count:Q", title=None, axis=alt.Axis(tickCount=4, format="~s", domain=False)),
                     tooltip=[alt.Tooltip("start:Q", title="from", format=",.1f"),
                              alt.Tooltip("to:Q", title="to", format=",.1f"),
                              alt.Tooltip("count:Q", title=y_title, format=",")])
@@ -181,7 +179,7 @@ def _neighborhoods_panel(p):
              ("Total area", f"{_fmt(p['total_sqmi'], 1)} sq mi", None),
              ("Median area", f"{_fmt(p['median_acre'])} acres", f"smallest {_fmt(p['min_acre'])}, largest {_fmt(p['max_acre'])} acres"),
              ("Numeric columns", _fmt(len(p["numeric"])),
-              "The columns the dependent variable and the controls are chosen from on the Stage 1 page: "
+              "The columns the dependent variable and the controls are chosen from in Stage 1 below: "
               + (", ".join(p["numeric"]) or "none"))]
     note = (f"Areas up to the 99th percentile ({_fmt(h['upper'])} acres); {_plural(h['clipped'], 'larger polygon')} not drawn."
             if h["clipped"] else None)
@@ -237,7 +235,6 @@ def restore_inputs():
 
 # ---- the page -------------------------------------------------------------------------------------------------
 def render():
-    st.title("1 · Inputs")
     st.markdown(
         "The pipeline starts from a **cleaned street centerline layer** and **neighborhood polygons** with a "
         "column that identifies each neighborhood, a crime-count column and numeric control variables. The "
@@ -316,4 +313,3 @@ def render():
                "in the control at the top right; the button at the top left opens the map full screen. "
                "The streets are drawn simplified for speed.")
     components.html(_map_html(streets, nbhd, mtimes, id_col), height=620)
-    st.page_link(st.session_state.pages["stage1"], label="Next: Stage 1, the street-network measures →")

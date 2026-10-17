@@ -1,4 +1,4 @@
-"""Page 3: stage 2, the component analysis of both variable blocks and the final dataset."""
+"""Section 3: stage 2, the component analysis of both variable blocks and the final dataset."""
 import streamlit as st
 
 import pipeline as pl
@@ -167,9 +167,8 @@ def _chat_block_state(key, variables, mtime, method):
 
 
 def render():
-    st.title("3 · Stage 2: component analysis")
     if not pl.measures_available():
-        st.info("Stage 1 has not produced `extracted_measures.shp` for the saved selection yet (page 2).")
+        st.info("Stage 1 has not produced `extracted_measures.shp` for the saved selection yet: run stage 1 in section 2 first.")
         return
     mtime = pl.measures_mtime()
     gdf, sel, net = _measures(mtime)
@@ -250,4 +249,4 @@ def _build(gdf, sel, net, ctrl, mtime, method):
         st.session_state.run["final"] = {"rows": len(out["final"]), "columns": [c for c in out["final"].columns if c != "geometry"]}
         st.success(f"{len(out['final'])} rows × {out['final'].shape[1] - 1} columns written to `{out['csv']}` "
                    f"(and the shapefile and dictionary beside it).")
-        st.page_link(st.session_state.pages["final"], label="Next: the final dataset →")
+        st.caption("The dataset is shown in section 4 below.")

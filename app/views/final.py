@@ -1,4 +1,4 @@
-"""Page 4: the final dataset, its dictionary, the choices made, and downloads."""
+"""Section 4: the final dataset, its dictionary, the choices made, and downloads."""
 import json
 import pandas as pd
 import streamlit as st
@@ -7,10 +7,9 @@ import pipeline as pl
 
 
 def render():
-    st.title("4 · Final dataset")
     present, sel = pl.final_outputs()
     if not present["csv"] or not present["dictionary"]:
-        st.info("Not built yet: finish the component analysis on page 3 and build the final dataset there.")
+        st.info("Not built yet: finish the component analysis in section 3 and build the final dataset at its end.")
         return
 
     final = pd.read_csv(present["csv"])

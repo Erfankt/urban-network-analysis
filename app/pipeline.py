@@ -8,7 +8,7 @@ Everything goes through the same functions as the terminal scripts, from the sam
 directory (src/), so a run made from the app leaves the same files in the same places:
 data/final_dataset/, data/checkpoints/ and output/pca_diagnostics/.
 """
-import io, json, os, re, subprocess, sys, time, zipfile
+import io, json, os, re, shutil, subprocess, sys, time, zipfile
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent
@@ -17,6 +17,7 @@ SRC_DIR = REPO_DIR / "src"
 DATA_DIR = REPO_DIR / "data"
 FINAL_DIR = DATA_DIR / "final_dataset"
 OUT_DIR = REPO_DIR / "output" / "pca_diagnostics"
+OUTPUT_DIR = REPO_DIR / "output"                       # everything the app and the scripts write besides data/
 APP_OUT_DIR = REPO_DIR / "output" / "app"           # the stage-1 log and run record
 STAGE1_LOG = APP_OUT_DIR / "stage1.log"
 STAGE1_RUN = APP_OUT_DIR / "stage1_run.json"
@@ -330,7 +331,7 @@ def layers_map_html(neighborhoods, edges=None, id_col="id", neighborhood_columns
     m.get_root().html.add_child(folium.Element("<style>.leaflet-container{background:#fff}</style>"))
 
     folium.GeoJson(nb_fc, name=f"Neighborhoods ({len(nb_fc['features'])})", show=True,
-                   style_function=lambda f: {"color": "#2a78d6", "weight": 2, "fillColor": "#2a78d6", "fillOpacity": 0.12},
+                   style_function=lambda f: {"color": "#0e8a7f", "weight": 2, "fillColor": "#0e8a7f", "fillOpacity": 0.14},
                    highlight_function=lambda f: {"weight": 3, "fillOpacity": 0.3},
                    popup=folium.GeoJsonPopup(fields=nb_cols, aliases=nb_cols, labels=True, localize=True,
                                              max_width=360)).add_to(m)
@@ -339,7 +340,7 @@ def layers_map_html(neighborhoods, edges=None, id_col="id", neighborhood_columns
         st_fc, st_cols = _feature_collection(edges, st_cols, simplify_ft=STREET_SIMPLIFY_FT,
                                              max_columns=STREET_POPUP_COLUMNS)
         folium.GeoJson(st_fc, name=f"Streets ({len(st_fc['features'])} segments)", show=True, smooth_factor=1.0,
-                       style_function=lambda f: {"color": "#52514e", "weight": 1.2, "opacity": 0.75},
+                       style_function=lambda f: {"color": "#34445a", "weight": 1.2, "opacity": 0.8},
                        popup=folium.GeoJsonPopup(fields=st_cols, aliases=st_cols, labels=True, localize=True,
                                                  max_width=360) if st_cols else None).add_to(m)
     m.fit_bounds([[b[1], b[0]], [b[3], b[2]]])
@@ -515,6 +516,37 @@ def stop_stage1():
         except psutil.TimeoutExpired:
             p.kill()
     return status
+
+
+def clear_output_dir():
+    """
+    Empty output/ (the stage-1 log and run record, the diagnostic figures) when the app shuts down.
+    Only the contents go: the folder stays, and so do data/ (the measures, the checkpoints, the final
+    dataset) and everything outside the repository's output/ folder. A stage-1 run that is still going
+    keeps output/app, its log and run record. Set KEEP_OUTPUT=1 in the environment to keep the folder as is.
+    """
+    try:
+        if os.environ.get("KEEP_OUTPUT") == "1":
+            return
+        out = OUTPUT_DIR
+        if out.is_symlink() or not out.is_dir() or out.resolve() != (REPO_DIR.resolve() / "output"):
+            return
+        try:
+            running = stage1_status()["state"] == "running"
+        except Exception:
+            running = False
+        for item in out.iterdir():
+            if running and item.name == "app":
+                continue
+            try:
+                if item.is_dir() and not item.is_symlink():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+            except OSError:
+                pass
+    except Exception:
+        pass                                    # never block a shutdown
 
 
 def measures_available():
