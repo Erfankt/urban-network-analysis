@@ -56,7 +56,7 @@ def _record(info):
 
 # ---- choosing where each layer comes from ---------------------------------------------------------------
 def _save_upload(kind, key):
-    """Button callback: save the uploaded files into data/ and select the layer (runs before the rerun)."""
+    """Uploader callback: save the picked files into data/ and select the layer (runs before the rerun)."""
     files = st.session_state.get(f"{key}_upload") or []
     try:
         path, message = pl.save_uploaded_layer(kind, [(f.name, f.getvalue()) for f in files])
@@ -89,10 +89,8 @@ def _layer_picker(label, kind, found, current):
             st.session_state[choice_key] = current if current in found else found[0]
         return st.selectbox(f"{label}: layer", found, key=choice_key, label_visibility="collapsed",
                             format_func=lambda p: f"{Path(p).name}  ·  data/{folder}/")
-    files = st.file_uploader("Files from this computer", accept_multiple_files=True, key=f"{key}_upload",
-                             type=LAYER_TYPES, help=UPLOAD_HELP)
-    st.button("Save into the data folder", key=f"{key}_save", disabled=not files, on_click=_save_upload,
-              args=(kind, key), help=UPLOAD_HELP)
+    st.file_uploader("Files from this computer", accept_multiple_files=True, key=f"{key}_upload",
+                     type=LAYER_TYPES, help=UPLOAD_HELP, on_change=_save_upload, args=(kind, key))
     return None
 
 
