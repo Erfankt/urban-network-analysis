@@ -1,4 +1,6 @@
 """Section 3: stage 2, the component analysis of both variable blocks and the final dataset."""
+from datetime import datetime
+
 import streamlit as st
 
 import pipeline as pl
@@ -171,6 +173,15 @@ def render():
         st.info("Stage 1 has not produced `extracted_measures.shp` for the saved selection yet: run stage 1 in section 2 first.")
         return
     mtime = pl.measures_mtime()
+    if pl.LAUNCH_TIME and mtime < pl.LAUNCH_TIME and not st.session_state.get("s2_started"):
+        # every launch starts this section empty: measures from an earlier run wait until the user asks for them
+        when = datetime.fromtimestamp(mtime).strftime("%b %d, %Y %H:%M")
+        st.info(f"Stage-1 measures from an earlier run are on disk (`extracted_measures.shp`, saved {when}). "
+                "Nothing is analyzed until you start: use them here, or run stage 1 in section 2 to measure again.")
+        if st.button("Start the component analysis with these measures", type="primary", key="s2_start"):
+            st.session_state["s2_started"] = True
+            st.rerun()
+        return
     gdf, sel, net = _measures(mtime)
     ctrl = sel["ctrl_vars"]
     st.markdown(f"**{len(gdf)} neighborhoods** · {len(net)} street-network measures "

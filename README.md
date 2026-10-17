@@ -37,17 +37,62 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
                                  -> data/final_dataset/user_selection.json
 ```
 
+## Setup
+
+Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder. There are two ways to set it up; the second is only for the terminal scripts.
+
+**Quickest start (double-click).** Install Python 3.11, then double-click `start_app.bat` (Windows) or `start_app.command` (macOS; Linux: run `./start_app.command`; the first time on macOS/Linux, make it executable with `chmod +x start_app.command`). The launcher creates `.venv` and installs Streamlit the first time, starts the app and opens your browser; the page's **0 · Setup** section installs the rest. Close the launcher window to stop the app. The two routes below do the same by hand.
+
+**From the web interface (the easy way).** You need Python and nothing else. From the repository folder:
+
+```bash
+python -m venv .venv
+```
+
+then activate it (step 2 below), install the one package the interface itself needs, and start it:
+
+```bash
+pip install streamlit
+streamlit run app/streamlit_app.py
+```
+
+The first section of the page, **0 · Setup**, checks the Python version, whether `.venv` exists and whether the app runs inside it, and every package of `requirements.txt` with its pinned version. If all is in place it shows a single line ("Python 3.11 · 16 packages in place · running in the virtual environment .venv", with the package table under *Details*) and the page goes straight on to the inputs. If something is missing it shows only the Setup section: the missing or mismatched packages, an optional tick for Jupyter (only the notebook version of stage 2 needs it), and the choice of where to install: a new `.venv`, the existing one, or the Python that runs the app. One button does it, with the pip output shown live. Installing into the running Python carries on by itself; installing into a `.venv` that the app is not running in ends with a **Restart the app** button that starts the app again inside it (same port, same terminal) and reloads the page. The step needs an internet connection and takes a few minutes the first time.
+
+**From the terminal (for the scripts).** Create and fill the environment once.
+
+1. Create the environment (first time only):
+
+```bash
+python -m venv .venv
+```
+
+2. Activate it (in every new terminal; the prompt then starts with `(.venv)`):
+
+```bash
+# Windows, Command Prompt
+.venv\Scripts\activate
+# Windows, PowerShell
+.venv\Scripts\Activate.ps1
+# macOS / Linux
+source .venv/bin/activate
+```
+
+3. Install the dependencies (first time, or after `requirements.txt` changes):
+
+```bash
+pip install -r requirements.txt
+```
+
+To see whether an existing environment is already complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"`: if it prints a version below 1.6 without an error, skip step 3. `requirements.txt` pins `scikit-learn<1.6` because `factor_analyzer` 0.5.x fails with newer scikit-learn releases, so an error such as `check_array() got an unexpected keyword argument 'force_all_finite'` means the script is running outside this environment, with a newer scikit-learn: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment. The last group of `requirements.txt` (Streamlit and three small packages) is only needed for the web interface.
 
 ## Input data
 
-The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and an identifier column with a distinct, non-missing value in every polygon. That column is chosen at setup (`id` by default, or `--id-col`); it keys the checkpoints and is kept under its own name in every output table.
+The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer can be in any projected coordinate reference system**, in feet or metres (a State Plane or UTM zone, say): the processor reads the CRS length unit and converts the buffer distances from miles, areas to acres, street density to feet per acre and shortest paths to miles, so the measures do not depend on the unit. A streets layer in latitude/longitude (e.g. EPSG:4326) is moved, together with the neighborhoods, to the UTM zone that fits its extent, and the run says so. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS has a readable length unit (projected, or latitude/longitude, which is moved to UTM), line and polygon geometries, and an identifier column with a distinct, non-missing value in every polygon. That column is chosen at setup (`id` by default, or `--id-col`); it keys the checkpoints and is kept under its own name in every output table.
 
 | File | Content | Requirements |
 |---|---|---|
 | `data/streetnetwork/streets.shp` | Street centerlines (LineString or MultiLineString) | Already cleaned: the pipeline assumes non-functional segments (e.g. retired or non-service roads) have been removed. |
-| `data/neighborhoods/neighborhoods.shp` | Neighborhood polygons | A unique identifier column (`id` by default; any column can be chosen); a numeric crime-count column; numeric columns for the control variables. Study-area decisions (e.g. the paper excluded the airport neighborhood) are made before running the pipeline. |
-
-The paper's units of analysis are the 371 Neighborhood Profile Areas (NPAs) of the City of Charlotte, NC (see *Reproducing the Charlotte study* below).
+| `data/neighborhoods/neighborhoods.shp` | Neighborhood polygons | A unique identifier column (`id` by default; any column can be chosen); a numeric crime column; numeric columns for the control variables.
 
 ## Stage 1: street-network measures (`src/run_analysis.py`)
 
@@ -73,7 +118,7 @@ It then runs `StreetNetworkProcessor` (`src/street_network_processor.py`):
 
 1. **Node extraction**: a node at every segment endpoint; shared endpoints become one node.
 2. **Simplification**: degree-2 nodes (continuations of the same road) are removed and their segments merged, so nodes represent intersections and dead ends.
-3. **Buffered local networks**: each neighborhood polygon is buffered by the chosen distances (the paper's 0.1, 0.25, 0.5, 0.75 and 1.0 miles by default) and the segments intersecting the buffer form the local network, of which the largest connected component is kept.
+3. **Buffered local networks**: each neighborhood polygon is buffered by the chosen distances and the segments intersecting the buffer form the local network, of which the largest connected component is kept.
 4. **Measures**: eight metrics per neighborhood and buffer, computed with NetworkX (betweenness and shortest paths are length-weighted).
 
 | Metric code | Measure | Definition |
@@ -151,7 +196,9 @@ The same three stages from the browser, for users who would rather click than ty
 streamlit run app/streamlit_app.py
 ```
 
-The app opens at `http://localhost:8501` and runs entirely on your computer; nothing is uploaded anywhere. The look follows the system's light or dark setting; the app's menu (top right, Settings, Theme) switches it, and the palette is defined in `.streamlit/config.toml`. It is one page with four numbered sections that follow the pipeline (the sidebar links to each; a later section says what is missing until the earlier ones are done):
+**First start.** Section 0 · Setup of the page checks the environment and installs what is missing; see *Setup* above.
+
+The app opens at `http://localhost:8501` and runs entirely on your computer; nothing is uploaded anywhere. The look follows the system's light or dark setting; the app's menu (top right, Settings, Theme) switches it, and the palette is defined in `.streamlit/config.toml`. It is one page with a setup note and four numbered sections that follow the pipeline (the sidebar links to each; a later section says what is missing until the earlier ones are done):
 
 1. **Inputs**: each layer comes either from the data folder of the repository (`data/streetnetwork/`, `data/neighborhoods/`; every `.shp`, `.gpkg` and `.geojson` there is listed) or from your computer (a shapefile's parts, a `.zip`, a `.gpkg` or a `.geojson`, copied into that folder and then listed like any other). The layers load as soon as they are picked and are validated as in the terminal; the neighborhood identifier column is chosen here. When the two layers use different coordinate reference systems the page says so and offers to reproject the neighborhoods into the streets' system (a copy is saved beside the original; without it the run reprojects on the fly). A panel per dataset gives the counts, lengths or areas, CRS and columns with a histogram, and a map shows both layers, each switchable, with the attributes of a clicked feature, a choice of basemaps (OpenStreetMap by default) and a full-screen button.
 2. **Stage 1**: buffer distances, dependent variable and controls, then *Run*. The run is `run_analysis.py` started in the background with all answers given, so it leaves exactly the files a terminal run leaves; the page shows one progress bar per buffer, read from the checkpoint CSVs, and the log. *Stop* ends the process and *Resume* continues it from the checkpoints; a browser refresh does not lose the run.
@@ -164,43 +211,6 @@ The sections call `app/pipeline.py`, which calls the functions in `src/` from th
 
 **The assistant.** A chat panel beside the page explains the steps, the measures and the diagnostics, and interprets the current run: each question is sent with the method notes (what the pipeline computes and what the paper chose) and a description of the run so far, from the inputs and the stage-1 status to the eigenvalue table, the solutions inspected with their salient loadings, the candidates for the representatives and the choices made. It can suggest how many components to keep or which measure to pick, with its reasons; every choice is still made by clicking in the pages. It can also look things up in your data through a few read-only tools (`app/tools.py`): list the columns, compute the area of every neighborhood, summarize or correlate columns, fetch the values of given neighborhoods; a table it produces appears in the chat with a download button. It cannot run code, change files or choose for you (set `ASSISTANT_TOOLS=0` in `.env` to turn the lookups off). With no model connected, the panel offers three ways to connect one by clicking, with no file to edit: paste a free Gemini or Groq key (the app checks it and keeps it in `.env`), or, for a local model, install Ollama and press the button that downloads the model. The model is free by default: a local [Ollama](https://ollama.com) server with its `llama3.2` model (install Ollama, run `ollama pull llama3.2` once; a few GB of memory, slower without a GPU). A Gemini or Groq API key in a `.env` file switches to that provider instead; copy `.env.example` to `.env` to see the settings. With no model reachable the panel says how to set one up and the rest of the app works as before. Answers from a small local model are a guide to the diagnostics, not a substitute for reading them.
 
-## Reproducing the Charlotte study
-
-Data sources used in the paper: the Mecklenburg County street centerline layer (2023) for the network, and the Charlotte/Mecklenburg Quality of Life Explorer (2022) for the NPA polygons, the property-crime counts (Charlotte-Mecklenburg Police Department) and the socio-spatial variables (American Community Survey and Mecklenburg County tax parcel data). The NPA containing the airport was excluded, leaving 371 neighborhoods.
-
-The 16 control variables of the paper (Table 4), with the field names used in the authors' neighborhood layer:
-
-| Field | Variable |
-|---|---|
-| `bachdg` | Population 25+ with a bachelor's degree or higher (share) |
-| `med_age` | Median age of residents |
-| `emp` | Employment rate (civilian labor force aged 16-64) |
-| `race_latin` | Hispanic or Latino residents (%) |
-| `race_asian` | Asian residents (%) |
-| `race_black` | Black residents (%) |
-| `race_white` | White residents (%) |
-| `income` | Inflation-adjusted median household income |
-| `home_own` | Owner-occupied share of occupied housing units |
-| `resoccup` | Occupied share of all housing units |
-| `sinfamrate` | Single-family units / total housing units |
-| `sinfamage` | Mean age of single-family structures |
-| `hs_den` | Housing units per acre |
-| `sinfamsize` | Mean heated square footage of single-family units |
-| `salesprice` | Mean sales price of single-family dwellings, condominiums and townhomes (two fiscal years) |
-| `heatedarea` | Total heated square footage of all structures |
-
-The Quality of Life Explorer export has no value for some variables in 23 of the 371 NPAs (40 cells in all), where there are no single-family homes or sales to report, or the Census estimate is suppressed. The paper's modelling table carries the following values in those cells, and the neighborhoods layer used with this repository has them filled in the same way:
-
-| Variable | NPAs | Value |
-|---|---|---|
-| `sinfamage` | 15 | 0 (no single-family units) |
-| `sinfamsize` | 13 | 0 (no single-family units) |
-| `salesprice` | 3 | 0 (no sales) |
-| `sinfamrate`, `home_own` | 1 each | 0 |
-| `income` | 6 (ids 28, 193, 247, 293, 294, 315) | 250001, 250001, 50000, 36786, 51714, 56549 (ACS estimates; 250001 is the top-coded value) |
-| `race_white` | 1 (id 380) | 77.8 |
-
-Choices made in the paper: five buffers (0.1 to 1.0 mi); a four-component solution for the 40 network measures (74.1% of their variance), represented by intersection density, average clustering coefficient and average shortest path at 0.75 mi and average betweenness centrality at 0.5 mi; a nine-component solution for the 16 controls. The paper describes the reduction as PCA with varimax rotation; the original computation used `factor_analyzer` with its default `minres` extraction and a varimax rotation, which is why both options are offered.
 
 ## Repository structure
 
@@ -217,6 +227,7 @@ Choices made in the paper: five buffers (0.1 to 1.0 mi); a four-component soluti
 |   |-- streamlit_app.py             web interface entry point: the one page, its sidebar, the chat panel beside it
 |   |-- pipeline.py                  the app's only link to src/: inputs, the stage-1 process, stage 2, the final dataset
 |   |-- chat.py                      the assistant: provider settings (.env), the model calls, what it is told
+|   |-- setup_env.py                 stage 0: checks the Python environment and installs what is missing
 |   |-- tools.py                     the assistant's read-only data lookups (areas, summaries, correlations)
 |   |-- chat_panel.py                the chat panel
 |   |-- theme.py                     the stylesheet, title bar, section headers, sidebar stepper and footer
@@ -224,6 +235,7 @@ Choices made in the paper: five buffers (0.1 to 1.0 mi); a four-component soluti
 |-- src/
 |   |-- run_analysis.py              stage 1 entry point: prompts or flags for the inputs, DEFAULTS
 |   |-- street_network_processor.py  StreetNetworkProcessor: network construction and measures
+|   |-- crs_units.py                 length unit of the working CRS (feet, metres) and lat/lon to UTM
 |   |-- user_inputs.py               prompts, input validation and user_selection.json helpers
 |   |-- common.py                    component analysis: computations and figures (overview_stats, fit_solution, ...) and the terminal workflow (explore_pca, select_representatives, ...)
 |   |-- final_dataset.py             assembly of the final dataset and its data dictionary
@@ -241,23 +253,9 @@ MIT License
 
 Copyright (c) 2025 Erfan Kefayat
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 
 ## Citation
 

@@ -24,6 +24,7 @@ front ends (the web app) can use them without a terminal:
 """
 import os, json
 import geopandas as gpd
+from crs_units import ensure_projected, metres_per_unit, unit_name
 from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS, align_neighborhoods_crs, crs_label
 
 SELECTION_PATH = "../data/final_dataset/user_selection.json"
@@ -115,16 +116,12 @@ def check_layers(edges, neighborhoods, id_col=DEFAULT_ID_COL):
         if gdf.crs is None:
             problems.append(f"{name}: no coordinate reference system defined")
     # The streets define the working CRS; when the layers differ, the neighborhoods are
-    # reprojected to it (align_neighborhoods_crs), so only the streets CRS has to be suitable.
-    if edges.crs is not None:
-        if not edges.crs.is_projected:
-            problems.append(f"streets: CRS is not projected ({edges.crs.to_string()}); "
-                            "reproject the streets to a projected CRS in US feet")
-        else:
-            unit = (edges.crs.axis_info[0].unit_name or "").lower()
-            if "foot" not in unit and "feet" not in unit:
-                problems.append(f"streets: CRS unit is '{unit}'; the pipeline assumes US feet "
-                                "(buffers in miles, areas in acres)")
+    # reprojected to it (align_neighborhoods_crs). Any projected CRS works (feet, metres, ...), and
+    # latitude/longitude streets are moved to their UTM zone (ensure_projected); only a projected CRS
+    # with a length unit that cannot be read is refused.
+    if edges.crs is not None and edges.crs.is_projected and not metres_per_unit(edges.crs):
+        problems.append(f"streets: the CRS length unit '{unit_name(edges.crs) or 'unknown'}' cannot be read; "
+                        "reproject the streets to a standard projected CRS")
 
     if id_col is not None:
         problems += check_id_column(neighborhoods, id_col)
@@ -151,7 +148,9 @@ def inspect_inputs(streets_path, neighborhoods_path, id_col=DEFAULT_ID_COL):
     problems = check_layers(edges, neighborhoods, id_col)
     if problems:
         return {"edges": edges, "neighborhoods": neighborhoods, "problems": problems, "note": None, "summary": ""}
+    edges, neighborhoods, move_note = ensure_projected(edges, neighborhoods)
     neighborhoods, note = align_neighborhoods_crs(edges, neighborhoods)
+    note = "; ".join(n for n in (move_note, note) if n) or None
     summary = (f"streets: {len(edges)} segments | neighborhoods: {len(neighborhoods)} polygons "
                f"| CRS: {crs_label(neighborhoods.crs)}")
     return {"edges": edges, "neighborhoods": neighborhoods, "problems": [], "note": note, "summary": summary}

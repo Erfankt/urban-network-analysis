@@ -163,12 +163,19 @@ def neighborhood_areas(ctx, unit="acres", limit=5):
             import geopandas as gpd
             sp = _resolve(ctx["streets_path"])
             if sp.exists():
-                crs = gpd.read_file(sp, rows=1).crs
+                sample = gpd.read_file(sp, rows=1)
+                crs = sample.crs
+                if crs is not None and crs.is_geographic:      # degrees: the pipeline works in the UTM zone
+                    crs = gpd.read_file(sp, rows=200).estimate_utm_crs()
                 if crs is not None and gdf.crs is not None and gdf.crs != crs:
                     gdf = gdf.to_crs(crs)
+                elif crs is None and gdf.crs is not None and gdf.crs.is_geographic:
+                    gdf = gdf.to_crs(gdf.estimate_utm_crs())
         if str(SRC_DIR) not in sys.path:
             sys.path.insert(0, str(SRC_DIR))
         from final_dataset import area_in_acres
+        if gdf.crs is not None and gdf.crs.is_geographic:
+            gdf = gdf.to_crs(gdf.estimate_utm_crs())
         acres = area_in_acres(gdf)
     except Exception as e:
         return {"text": f"The area could not be computed: {e}", "table": None}

@@ -1,6 +1,7 @@
 import os, io, csv, json, time, hashlib, warnings, numpy as np, pandas as pd, geopandas as gpd, networkx as nx, scipy
 from shapely.geometry import Point, LineString, MultiLineString
 from tqdm import tqdm
+from crs_units import units_per_mile, units_per_acre, feet_per_unit, unit_label, ensure_projected
 warnings.filterwarnings("ignore")
 
 # The eight configuration measures, in output order (see README for definitions)
@@ -8,8 +9,8 @@ NETWORK_METRICS = ["int_den", "st_den", "nd_deg", "cl_cof", "shtpth", "bt_cnt", 
 
 FINAL_DIR = "../data/final_dataset"
 CHECKPOINT_DIR = "../data/checkpoints"   # one sub-folder per pair of input layers, one CSV per buffer
-SAME_CRS_TOLERANCE = 0.1                 # layer units (feet): two CRS definitions that move no coordinate
-                                         # by more than this are the same system written differently
+SAME_CRS_TOLERANCE = 0.1                 # layer units (feet or metres): two CRS definitions that move no
+                                         # coordinate by more than this are the same system written differently
 
 
 def crs_label(crs):
@@ -38,7 +39,7 @@ def align_neighborhoods_crs(edges, neighborhoods):
     shift = float(np.nanmax(np.abs(moved.bounds.to_numpy() - neighborhoods.bounds.to_numpy())))
     if shift < SAME_CRS_TOLERANCE:
         note = (f"the neighborhoods CRS is the streets CRS written differently "
-                f"(no coordinate moves by more than {shift:.3g} ft); kept as is")
+                f"(no coordinate moves by more than {shift:.3g} {unit_label(edges.crs)}); kept as is")
         return neighborhoods.set_crs(edges.crs, allow_override=True), note
     note = (f"neighborhoods reprojected from {crs_label(neighborhoods.crs)} "
             f"to the streets CRS {crs_label(edges.crs)}")
@@ -71,7 +72,7 @@ class StreetNetworkProcessor:
 
         # Buffer-specific parameters, updated in the process_buffers loop
         self.buffer_mile = None
-        self.buffer_distance_feet = None
+        self.buffer_distance = None        # the buffer in layer units (miles x units per mile)
         self.buffer_mile_name = None
 
         self._load_base_data()
@@ -90,8 +91,9 @@ class StreetNetworkProcessor:
         if ids.isna().any() or ids.duplicated().any():
             raise ValueError(f"Neighborhood identifier column '{self.id_col}' must be unique and complete.")
 
-        # 3. Edges and polygons must share a projected CRS (buffers are in feet);
-        #    the neighborhoods are reprojected to the streets CRS when they differ
+        # 3. Edges and polygons must share a projected CRS (buffers are in miles, converted to the layer unit);
+        #    latitude/longitude streets go to their UTM zone, and the neighborhoods are reprojected to the
+        #    streets CRS when they differ
         self._validate_crs()
 
         print(f"Base data loaded: {len(self.source_edges)} edges, {len(self.NPA_shape)} neighborhoods.")
@@ -100,6 +102,9 @@ class StreetNetworkProcessor:
         for name, gdf in (("Street", self.source_edges), ("Neighborhood", self.NPA_shape)):
             if gdf.crs is None:
                 raise ValueError(f"{name} layer has no coordinate reference system defined.")
+        self.source_edges, self.NPA_shape, note = ensure_projected(self.source_edges, self.NPA_shape)
+        if note:
+            print(f"Note: {note}")
         self.NPA_shape, note = align_neighborhoods_crs(self.source_edges, self.NPA_shape)
         if note:
             print(f"Note: {note}")
@@ -287,7 +292,7 @@ class StreetNetworkProcessor:
                 print(f"Recompute: {removed} existing checkpoint file(s) of these buffers removed.")
 
         for self.buffer_mile in buffer_list_mile:
-            self.buffer_distance_feet = self.buffer_mile * 5280  # Convert miles to feet
+            self.buffer_distance = self.buffer_mile * units_per_mile(self.source_edges.crs)  # miles -> layer units
             self.buffer_mile_name = self.buffer_code(self.buffer_mile)
 
             print(f"\n--- Processing Buffer: {self.buffer_mile} miles ({self.buffer_mile_name}) ---")
@@ -382,7 +387,7 @@ class StreetNetworkProcessor:
 
         # 1. Prepare NPA polygons: buffer the ones still to do
         buffered_NPA = todo.copy()
-        buffered_NPA['geometry'] = buffered_NPA['geometry'].buffer(self.buffer_distance_feet)
+        buffered_NPA['geometry'] = buffered_NPA['geometry'].buffer(self.buffer_distance)
 
         # 2. Rewrite the checkpoint cleanly (header + rows already done), then append as we go
         with open(checkpoint_path, "w", newline="", encoding="utf-8") as f:
@@ -531,9 +536,10 @@ class StreetNetworkProcessor:
         measures = {}
 
         # --- Density Measures ---
-        area_acre = polygon["geometry"].area / 43560
+        area_acre = polygon["geometry"].area / units_per_acre(self.source_edges.crs)
 
-        total_st_length = edges_main['geometry'].length.sum()
+        # street density is reported in feet per acre whatever the layer unit is
+        total_st_length = edges_main['geometry'].length.sum() * feet_per_unit(self.source_edges.crs)
         measures["st_den"] = total_st_length / area_acre
 
         intersections = [node for node in G.nodes if G.degree(node) >= 3]
@@ -560,7 +566,7 @@ class StreetNetworkProcessor:
                 continue
 
         avg_shortest_path_length = np.mean(path_lengths) if path_lengths else np.nan
-        measures["shtpth"] = (avg_shortest_path_length / 5280) if not np.isnan(avg_shortest_path_length) else np.nan
+        measures["shtpth"] = (avg_shortest_path_length / units_per_mile(self.source_edges.crs)) if not np.isnan(avg_shortest_path_length) else np.nan
 
         # Format column names
         return {f"{k}{self.buffer_mile_name}": v for k, v in measures.items()}

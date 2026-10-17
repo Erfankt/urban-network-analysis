@@ -381,7 +381,7 @@ shown to the user in the chat automatically, so say that it is there rather than
 code, change files or choose for the user. Answer briefly and concretely, in plain language."""
 
 METHOD_NOTES = """METHOD NOTES
-Inputs: a cleaned street centerline layer (projected CRS in US feet; it defines the working CRS) and \
+Inputs: a cleaned street centerline layer (any projected CRS, in feet or metres, or latitude/longitude, which is moved to its UTM zone; it defines the working CRS and its unit is converted to miles, acres and feet) and \
 neighborhood polygons with an identifier column (unique, chosen in the Inputs section; `id` in the paper's \
 data), a crime-count column and numeric control variables. The neighborhoods are reprojected to the \
 streets CRS when they differ.
@@ -475,7 +475,7 @@ def system_message(run, page):
 SUGGESTIONS = {
     "Inputs": ["Compute the area in acres of all neighborhoods.",
                "What must the two input layers contain?",
-               "Why do the streets have to be in a CRS in feet?",
+               "Does the streets layer have to be in feet?",
                "What does the CRS warning mean?"],
     "Stage 1": ["Compute the area in acres of all neighborhoods.",
                 "What do the buffer distances mean, and why five of them?",

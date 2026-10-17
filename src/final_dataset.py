@@ -9,19 +9,15 @@ is written to data/final_dataset/ in one place:
 """
 import os
 import pandas as pd, geopandas as gpd
+from crs_units import units_per_acre
 
 
 def area_in_acres(gdf):
-    """Polygon area in acres; the layer must be in a projected CRS in feet or metres."""
-    unit = ""
-    if gdf.crs is not None and gdf.crs.axis_info:
-        unit = (gdf.crs.axis_info[0].unit_name or "").lower()
-    if "foot" in unit or "feet" in unit:
-        return gdf.geometry.area / 43560.0
-    if "met" in unit:
-        return gdf.geometry.area / 4046.8564224
-    raise ValueError(f"Cannot convert areas to acres: CRS unit is '{unit or 'unknown'}'. "
-                     "Reproject the neighborhoods layer to a projected CRS in feet or metres.")
+    """Polygon area in acres; the layer must be in a projected CRS (feet, metres or any other length unit)."""
+    if gdf.crs is None or not gdf.crs.is_projected:
+        raise ValueError("Cannot convert areas to acres: the layer is not in a projected CRS. "
+                         "Reproject the neighborhoods layer to a projected CRS (feet, metres, ...).")
+    return gdf.geometry.area / units_per_acre(gdf.crs)
 
 
 def assemble_final_dataset(gdf, crime_col, representatives, pca_net, pca_ctrl, id_col="id"):
