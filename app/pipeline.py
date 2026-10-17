@@ -690,11 +690,18 @@ def build_final_dataset(gdf, sel, method, rotation, net_report, ctrl_report, rep
             "final": final_gdf, "selection_path": SELECTION_PATH, "figures_dir": str(OUT_DIR)}
 
 
+LAUNCH_TIME = None                     # set once per server process by the app (see streamlit_app.py)
+
+
 def final_outputs():
     """The final-dataset files on disk (None for a missing one) and the saved selection."""
     paths = {"shp": FINAL_DIR / "final_dataset.shp", "csv": FINAL_DIR / "final_dataset.csv",
              "dictionary": FINAL_DIR / "final_dataset_dictionary.csv", "selection": Path(SELECTION_PATH).resolve()}
     present = {k: (p if p.exists() else None) for k, p in paths.items()}
+    if LAUNCH_TIME:                       # stage 2 starts empty at every launch: files from an earlier launch are not shown
+        for k in ("shp", "csv", "dictionary"):
+            if present[k] and present[k].stat().st_mtime < LAUNCH_TIME:
+                present[k] = None
     sel = None
     if present["selection"]:
         with open(present["selection"], encoding="utf-8") as f:

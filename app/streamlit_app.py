@@ -10,6 +10,7 @@ Groq key from .env, and the app works without it.
 """
 import atexit
 import sys
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -71,6 +72,17 @@ def _clear_output_at_exit():
 
 
 _clear_output_at_exit()
+
+
+@st.cache_resource
+def _launch_time():
+    """Once per server process: the moment the app started. Stage 2 and the final dataset only show what was
+    built since then, and output/ is emptied now too (covers a previous run that could not clean up at exit)."""
+    pl.clear_output_dir()
+    return time.time()
+
+
+pl.LAUNCH_TIME = _launch_time()
 
 theme.inject()
 with st.sidebar:
