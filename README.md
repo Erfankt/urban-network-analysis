@@ -4,9 +4,9 @@ Reproducible data-construction pipeline for the paper
 
 > Kefayat, E., & Thill, J.-C. (2025). *Urban Street Network Configuration and Property Crime: An Empirical Multivariate Case Study.* ISPRS International Journal of Geo-Information, 14(5), 200. https://doi.org/10.3390/ijgi14050200
 
-Starting from a cleaned street centerline layer and a set of neighborhood polygons, the pipeline builds the neighborhood-level street networks, measures their configuration at five nested spatial scales, reduces the measures (and the socio-spatial controls) with a component analysis, and writes a modeling-ready dataset with a data dictionary. The repository ends there: the spatial count models of the paper (negative binomial GLM, SAR-NB and CAR-NB estimated with INLA, GWR-NB) consume this dataset but are fitted outside the repository.
+Starting from a cleaned street centerline layer and a set of neighborhood polygons, the pipeline builds the neighborhood-level street networks, measures their configuration at different nested spatial scales, reduces the measures (and the socio-spatial controls) with a component analysis, and writes a modeling-ready dataset with a data dictionary.
 
-Every input and every analytical choice (input files, buffer distances, dependent variable, control variables, extraction method, number of components, representative measures) is entered interactively at run time, validated, and recorded in `data/final_dataset/user_selection.json`, so the pipeline can be rerun on another city or with other choices without editing code.
+Every input and every analytical choice (input files, buffer distances, dependent variable, control variables, extraction method, number of components, representative measures) is recorded in `data/final_dataset/user_selection.json`.
 
 The pipeline has two front ends over the same code: the terminal scripts described below, and a **web interface** (`app/`, see *Web interface*) that runs the same stages from the browser, with an assistant beside every step that explains the diagnostics and interprets the run's own numbers.
 
@@ -14,22 +14,22 @@ The pipeline has two front ends over the same code: the terminal scripts describ
 
 ```
 data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
-(cleaned street centerline)               (polygons: id, crime count, control variables)
+(cleaned street centerline)               (polygons: id, crime variable, control variables)
             |                                        |
             v                                        v
   1. python run_analysis.py      - input files, buffer distances, dependent variable and
                                    controls (prompts with defaults, or command-line flags)
-                                 - build the network, measure 8 metrics x 5 buffers per neighborhood
+                                 - build the network per neighborhood
                                    (checkpointed in data/checkpoints/: an interrupted run resumes)
                                  -> data/final_dataset/extracted_measures.shp
             |
             v
   2. pca_analysis.ipynb  or  python pca_analysis.py
-                                 - choose the extraction method (prompt)
+                                 - choose the extraction method
                                  - street-network block: overview, inspect candidate solutions,
                                    choose the number of components, choose one representative
-                                   measure per component (prompts)
-                                 - socio-spatial block: overview, inspect, choose (prompts)
+                                   measure per component
+                                 - socio-spatial block: overview, inspect, choose
             |
             v
   3. final dataset               -> data/final_dataset/final_dataset.shp / .csv
@@ -39,7 +39,7 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
 
 ## Setup
 
-Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder. It is created and filled once: if `.venv` already exists with the requirements installed (the check below tells), skip steps 1 and 3 and only activate it in each new terminal.
+Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder.
 
 1. Create the environment (first time only):
 
