@@ -212,7 +212,9 @@ def render():
     st.markdown(
         "The pipeline starts from a **cleaned street centerline layer** and **neighborhood polygons** with a "
         "column that identifies each neighborhood, a crime-count column and numeric control variables. The "
-        "streets must be in a projected coordinate reference system in US feet (a State Plane zone, say). "
+        "streets can be in any projected coordinate reference system (feet or metres: a State Plane or UTM zone, say) "
+        "or in latitude/longitude, which is then moved to its UTM zone; lengths and areas are converted to miles, "
+        "acres and feet, so the measures are the same whatever the unit. "
         "Pick each layer from the data folder of the repository, or add one from this computer.")
 
     found = pl.discover_shapefiles()

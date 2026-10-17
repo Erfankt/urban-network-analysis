@@ -43,6 +43,7 @@ from common import (missing_summary, overview_stats, rules_of_thumb_text, correl
                     fit_solution, unrotated_loadings_figure, rotated_loadings_figure, solution_summary_text,
                     component_candidates, candidate_text, FigureSaver)
 from final_dataset import assemble_final_dataset, write_final_dataset
+from crs_units import ensure_projected, working_crs, units_per_mile, units_per_acre, feet_per_unit
 
 MEASURES_PATH = FINAL_DIR / "extracted_measures.shp"
 STAGE1_DONE = "Network Processing Complete"           # printed by run_analysis.py at the end
@@ -154,7 +155,7 @@ def id_candidates(neighborhoods):
 def crs_relation(edges, neighborhoods):
     """
     How the two CRS compare: 'same', 'equivalent' (the same system written differently: no coordinate
-    moves by more than SAME_CRS_TOLERANCE ft), 'different', or 'unknown' (a layer without a CRS).
+    moves by more than SAME_CRS_TOLERANCE, in layer units), 'different', or 'unknown' (a layer without a CRS).
     """
     if edges.crs is None or neighborhoods.crs is None:
         return "unknown"
@@ -178,9 +179,12 @@ def check_inputs(layers, id_col):
             "id_col": id_col, "problems": check_layers(edges, nb, id_col), "note": None, "summary": ""}
     if info["problems"]:
         return info
+    edges, _, move_note = ensure_projected(edges)       # latitude/longitude streets are measured in their UTM zone
     relation = crs_relation(edges, nb)
     aligned, note = align_neighborhoods_crs(edges, nb)
-    info.update(neighborhoods=aligned, n_segments=int(len(edges)), n_neighborhoods=int(len(nb)),
+    if move_note:
+        relation, note = "different", "; ".join(n for n in (move_note, note) if n)
+    info.update(edges=edges, neighborhoods=aligned, n_segments=int(len(edges)), n_neighborhoods=int(len(nb)),
                 columns=numeric_columns(nb, id_col), note=note if relation == "different" else None,
                 crs={"relation": relation, "streets": crs_label(edges.crs), "neighborhoods": crs_label(nb.crs)},
                 summary=(f"streets: {len(edges)} segments | neighborhoods: {len(nb)} polygons "
@@ -196,13 +200,14 @@ def write_matched_neighborhoods(layers):
     """
     edges, nb = layers["edges"], layers["neighborhoods"]
     src = Path(layers["neighborhoods_path"])
-    code = edges.crs.to_epsg()
+    crs = working_crs(edges)
+    code = crs.to_epsg()
     tag = f"epsg{code}" if code else "reprojected"
     ext = ".gpkg" if src.suffix.lower() == ".gpkg" else ".shp"
     folder = DATA_DIR / LAYER_DIRS["neighborhoods"]
     folder.mkdir(parents=True, exist_ok=True)
     out = folder / f"{src.stem}_{tag}{ext}"
-    nb.to_crs(edges.crs).to_file(out)
+    nb.to_crs(crs).to_file(out)
     return f"../data/{LAYER_DIRS['neighborhoods']}/{out.name}"
 
 
@@ -223,11 +228,11 @@ def _histogram(values, bins=30, clip_quantile=0.99):
 def layer_profile(layers, info):
     """
     The numbers behind the two dataset panels of the Inputs page: counts, lengths or areas (in the
-    streets CRS, US feet), geometry notes, columns, CRS, and a binned histogram each.
+    streets CRS, shown in feet and acres), geometry notes, columns, CRS, and a binned histogram each.
     """
-    edges, nb = layers["edges"], info["neighborhoods"]
-    length_ft = edges.geometry.length.to_numpy(dtype=float)
-    area_sqft = nb.geometry.area.to_numpy(dtype=float)
+    edges, nb = info["edges"], info["neighborhoods"]       # both in the working CRS (any projected unit)
+    length_ft = edges.geometry.length.to_numpy(dtype=float) * feet_per_unit(edges.crs)
+    area_sqft = nb.geometry.area.to_numpy(dtype=float) / units_per_acre(nb.crs) * SQFT_PER_ACRE
     attr_cols = [c for c in edges.columns if c != "geometry"]
     numeric = info["columns"]
     other = [c for c in nb.columns if c not in numeric and c not in (info["id_col"], "geometry")]
