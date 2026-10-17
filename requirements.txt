@@ -16,3 +16,9 @@ folium
 
 # Notebook version of stage 2 only
 jupyter
+
+# Web app (app/streamlit_app.py)
+streamlit>=1.40
+requests
+python-dotenv
+psutil

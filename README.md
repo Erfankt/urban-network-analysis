@@ -8,6 +8,8 @@ Starting from a cleaned street centerline layer and a set of neighborhood polygo
 
 Every input and every analytical choice (input files, buffer distances, dependent variable, control variables, extraction method, number of components, representative measures) is entered interactively at run time, validated, and recorded in `data/final_dataset/user_selection.json`, so the pipeline can be rerun on another city or with other choices without editing code.
 
+The pipeline has two front ends over the same code: the terminal scripts described below, and a **web interface** (`app/`, see *Web interface*) that runs the same stages from the browser, with an assistant beside every step that explains the diagnostics and interprets the run's own numbers.
+
 ## Workflow
 
 ```
@@ -62,16 +64,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-To see whether an existing environment is already complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"`: if it prints a version below 1.6 without an error, skip step 3. `requirements.txt` pins `scikit-learn<1.6` because `factor_analyzer` 0.5.x fails with newer scikit-learn releases, so an error such as `check_array() got an unexpected keyword argument 'force_all_finite'` means the script is running outside this environment, with a newer scikit-learn: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment.
+To see whether an existing environment is already complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"`: if it prints a version below 1.6 without an error, skip step 3. `requirements.txt` pins `scikit-learn<1.6` because `factor_analyzer` 0.5.x fails with newer scikit-learn releases, so an error such as `check_array() got an unexpected keyword argument 'force_all_finite'` means the script is running outside this environment, with a newer scikit-learn: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment. The last group of `requirements.txt` (Streamlit and three small packages) is only needed for the web interface.
 
 ## Input data
 
-The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and a unique `id` column.
+The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and an identifier column with a distinct, non-missing value in every polygon. That column is chosen at setup (`id` by default, or `--id-col`); it keys the checkpoints and is kept under its own name in every output table.
 
 | File | Content | Requirements |
 |---|---|---|
 | `data/streetnetwork/streets.shp` | Street centerlines (LineString or MultiLineString) | Already cleaned: the pipeline assumes non-functional segments (e.g. retired or non-service roads) have been removed. |
-| `data/neighborhoods/neighborhoods.shp` | Neighborhood polygons | A unique identifier column named `id`; a numeric crime-count column; numeric columns for the control variables. Study-area decisions (e.g. the paper excluded the airport neighborhood) are made before running the pipeline. |
+| `data/neighborhoods/neighborhoods.shp` | Neighborhood polygons | A unique identifier column (`id` by default; any column can be chosen); a numeric crime-count column; numeric columns for the control variables. Study-area decisions (e.g. the paper excluded the airport neighborhood) are made before running the pipeline. |
 
 The paper's units of analysis are the 371 Neighborhood Profile Areas (NPAs) of the City of Charlotte, NC (see *Reproducing the Charlotte study* below).
 
@@ -82,13 +84,13 @@ cd src
 python run_analysis.py
 ```
 
-The script asks for everything it needs, showing a default in brackets that Enter accepts: the two input shapefiles (validated as described above), the buffer distances in miles (comma-separated; the paper's five are the default; the distances must be positive and distinct and must yield column names within the 10-character shapefile limit, so at most two decimals), then, from the numeric columns of the neighborhoods layer, the dependent variable (crime count) and the control variables, by number or name. The defaults live in `DEFAULTS` at the top of `run_analysis.py`.
+The script asks for everything it needs, showing a default in brackets that Enter accepts: the two input shapefiles (validated as described above), the neighborhood identifier column (`id` when the layer has one that is unique and complete, otherwise the first column that is), the buffer distances in miles (comma-separated; the paper's five are the default; the distances must be positive and distinct and must yield column names within the 10-character shapefile limit, so at most two decimals), then, from the numeric columns of the neighborhoods layer, the dependent variable (crime count) and the control variables, by number or name. The defaults live in `DEFAULTS` at the top of `run_analysis.py`.
 
 The same answers can be given up front, for scripted or repeated runs; whatever is missing is still prompted for:
 
 ```bash
 python run_analysis.py --streets ../data/streetnetwork/streets.shp --neighborhoods ../data/neighborhoods/neighborhoods.shp \
-                       --buffers 0.1,0.25,0.5,0.75,1.0 --crime propcrimct --controls bachdg,med_age,emp
+                       --id-col id --buffers 0.1,0.25,0.5,0.75,1.0 --crime propcrimct --controls bachdg,med_age,emp
 python run_analysis.py --reuse        # rerun with the previously saved answers, no questions
 python run_analysis.py --recompute    # ignore the checkpoints (see below) and measure every buffer again
 ```
@@ -117,7 +119,7 @@ Column names are `<metric code><buffer code>`, where the buffer code is the dist
 
 The run can take a while for a city-sized network: the centrality and shortest-path measures are computed for every node of every local network, and progress bars report each step. The larger buffers take disproportionately longer, since these measures grow faster than the size of the local network.
 
-**Checkpoints and resuming.** The measures are saved as they are produced, not at the end: each buffer has a CSV in `data/checkpoints/<fingerprint>/` to which a neighborhood's row is appended the moment it has been measured. A run that stops for any reason (an error, Ctrl+C, the computer going to sleep) therefore loses at most the neighborhood in progress; `python run_analysis.py --reuse` continues from there, skipping the neighborhoods and buffers already done. The checkpoints are keyed by a fingerprint of the street and neighborhood geometries (`inputs.json` in the folder says which files they came from), so a run with other layers never reuses them by mistake, while a run with the same layers reuses them even if the attributes changed: changing the crime column or the control variables, or adding a buffer distance, costs only the new work. `extracted_measures.shp` is assembled from the checkpoints at the end of every run and overwritten, since rebuilding it takes seconds. `--recompute` ignores the checkpoints of the buffers in the run (after a change to the measure code, say); deleting the folder has the same effect. The folder is not tracked by git.
+**Checkpoints and resuming.** The measures are saved as they are produced, not at the end: each buffer has a CSV in `data/checkpoints/<fingerprint>/` to which a neighborhood's row is appended the moment it has been measured. A run that stops for any reason (an error, Ctrl+C, the computer going to sleep) therefore loses at most the neighborhood in progress; `python run_analysis.py --reuse` continues from there, skipping the neighborhoods and buffers already done. The checkpoints are keyed by a fingerprint of the street and neighborhood geometries (`inputs.json` in the folder says which files they came from), so a run with other layers never reuses them by mistake, while a run with the same layers reuses them even if the attributes changed: changing the crime column or the control variables, or adding a buffer distance, costs only the new work. `extracted_measures.shp` is assembled from the checkpoints at the end of every run and overwritten, since rebuilding it takes seconds. `--recompute` deletes the checkpoints of the buffers in the run before measuring (after a change to the measure code, say), so a recompute run that is interrupted and then resumed with `--reuse` never falls back on old files; deleting the folder has the same effect. The folder is not tracked by git.
 
 ## Stage 2: component analysis (`src/pca_analysis.ipynb` or `src/pca_analysis.py`)
 
@@ -141,6 +143,7 @@ All choices are appended to `user_selection.json`, which after both stages reads
 {
   "streets_path": "../data/streetnetwork/streets.shp",
   "neighborhoods_path": "../data/neighborhoods/neighborhoods.shp",
+  "id_col": "id",
   "buffer_list_mile": [0.1, 0.25, 0.5, 0.75, 1.0],
   "crime_col": "propcrimct",
   "ctrl_vars": ["bachdg", "med_age", "..."],
@@ -158,7 +161,7 @@ All choices are appended to `user_selection.json`, which after both stages reads
 
 | Column(s) | Role | Use in the models |
 |---|---|---|
-| `id` | identifier | |
+| identifier column (name as selected, `id` in the paper's data) | identifier | |
 | `cent_x`, `cent_y` | polygon centroid in the layer CRS | coordinates for GWR |
 | crime column (name as selected) | dependent variable | property crime count |
 | `area_acre` | exposure | `log(area_acre)` as offset in the count models |
@@ -167,6 +170,25 @@ All choices are appended to `user_selection.json`, which after both stages reads
 | `PC1_ctrl` ... `PCk_ctrl` | socio-spatial component scores | controls |
 
 `final_dataset_dictionary.csv` repeats this for the actual columns, including which component each representative stands for and its rotated loading. The paper's models use queen contiguity for the spatial weights, which can be built from the shapefile.
+
+## Web interface (`app/streamlit_app.py`)
+
+The same three stages from the browser, for users who would rather click than type. From the repository folder, in the activated environment (the web dependencies are in `requirements.txt`):
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+The app opens at `http://localhost:8501` and runs entirely on your computer; nothing is uploaded anywhere. Its four pages follow the pipeline:
+
+1. **Inputs**: each layer comes either from the data folder of the repository (`data/streetnetwork/`, `data/neighborhoods/`; every `.shp`, `.gpkg` and `.geojson` there is listed) or from your computer (a shapefile's parts, a `.zip`, a `.gpkg` or a `.geojson`, copied into that folder and then listed like any other). The layers load as soon as they are picked and are validated as in the terminal; the neighborhood identifier column is chosen here. When the two layers use different coordinate reference systems the page says so and offers to reproject the neighborhoods into the streets' system (a copy is saved beside the original; without it the run reprojects on the fly). A panel per dataset gives the counts, lengths or areas, CRS and columns with a histogram, and a map shows both layers, each switchable, with the attributes of a clicked feature, a choice of basemaps (OpenStreetMap by default) and a full-screen button.
+2. **Stage 1**: buffer distances, dependent variable and controls, then *Run*. The run is `run_analysis.py` started in the background with all answers given, so it leaves exactly the files a terminal run leaves; the page shows one progress bar per buffer, read from the checkpoint CSVs, and the log. *Stop* ends the process and *Resume* continues it from the checkpoints; a browser refresh does not lose the run.
+3. **Stage 2**: the extraction method, then for each block the overview (correlation heatmap, scree plot, eigenvalue table, rules of thumb), any candidate solution on request (rotated and unrotated loadings, variance explained, communalities, salient and cross-loading variables), the number to retain, and, for the street-network block, one dropdown per component for the representative measure, with its loading and cross-loading. A tab shows the distribution figure of any variable, and the last tab builds the final dataset.
+4. **Final dataset**: the dictionary, a preview of the table, downloads (CSV, dictionary, zipped shapefile, the choices as JSON) and the saved figures.
+
+The pages call `app/pipeline.py`, which calls the functions in `src/` from the same working directory as the terminal scripts, so an app run and a terminal run with the same choices write identical files to `data/final_dataset/` and `output/pca_diagnostics/`, including `user_selection.json` and the numbered figures.
+
+**The assistant.** A chat panel beside every page explains the steps, the measures and the diagnostics, and interprets the current run: each question is sent with the method notes (what the pipeline computes and what the paper chose) and a description of the run so far, from the inputs and the stage-1 status to the eigenvalue table, the solutions inspected with their salient loadings, the candidates for the representatives and the choices made. It can suggest how many components to keep or which measure to pick, with its reasons; every choice is still made by clicking in the pages, and the assistant cannot run or change anything. The model is free by default: a local [Ollama](https://ollama.com) server with its `llama3.2` model (install Ollama, run `ollama pull llama3.2` once; a few GB of memory, slower without a GPU). A Gemini or Groq API key in a `.env` file switches to that provider instead; copy `.env.example` to `.env` to see the settings. With no model reachable the panel says how to set one up and the rest of the app works as before. Answers from a small local model are a guide to the diagnostics, not a substitute for reading them.
 
 ## Reproducing the Charlotte study
 
@@ -216,14 +238,23 @@ Choices made in the paper: five buffers (0.1 to 1.0 mi); a four-component soluti
 |   |-- checkpoints/        one folder per pair of input layers, one CSV of measures per buffer (generated; not tracked)
 |   `-- final_dataset/      extracted_measures.shp, final_dataset.*, user_selection.json (generated; not tracked)
 |-- output/pca_diagnostics/ figures and the neighborhood map written by pca_analysis.py (generated; not tracked)
+|-- output/app/             the stage-1 log and run record of the web app (generated; not tracked)
+|-- app/
+|   |-- streamlit_app.py             web interface entry point: pages, layout, the chat panel beside them
+|   |-- pipeline.py                  the app's only link to src/: inputs, the stage-1 process, stage 2, the final dataset
+|   |-- chat.py                      the assistant: provider settings (.env), the model calls, what it is told
+|   |-- chat_panel.py                the chat panel
+|   `-- views/                       one module per page: inputs, stage1, stage2, final
 |-- src/
 |   |-- run_analysis.py              stage 1 entry point: prompts or flags for the inputs, DEFAULTS
 |   |-- street_network_processor.py  StreetNetworkProcessor: network construction and measures
 |   |-- user_inputs.py               prompts, input validation and user_selection.json helpers
-|   |-- common.py                    component analysis: factor_loading_matrices, explore_pca, select_representatives
+|   |-- common.py                    component analysis: computations and figures (overview_stats, fit_solution, ...) and the terminal workflow (explore_pca, select_representatives, ...)
 |   |-- final_dataset.py             assembly of the final dataset and its data dictionary
 |   |-- pca_analysis.ipynb           stage 2 and 3, notebook version
 |   `-- pca_analysis.py              stage 2 and 3, script version
+|-- .env.example            settings of the assistant (copy to .env)
+|-- .streamlit/config.toml  display settings of the web app
 |-- requirements.txt
 `-- README.md
 ```

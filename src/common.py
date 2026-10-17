@@ -232,42 +232,78 @@ def factor_loading_matrices(
 
 
 # =============================================================================
-# Interactive PCA workflow (used by pca_analysis.ipynb)
-#   1. pca_overview  - what can be judged before choosing n (independent of n)
-#   2. pca_report    - the full diagnostic report for one candidate n
-#   3. explore_pca   - the interactive loop: overview -> inspect n's -> final n
+# Component-analysis workflow, in two layers:
+#
+#   computations and figures (no printing, no prompting; used by the web app and the CLI)
+#     missing_summary        - missing values among the selected variables
+#     overview_stats         - correlation matrix, eigenvalues, rules of thumb (independent of n)
+#     correlation_figure, scree_figure
+#     fit_solution           - one candidate solution: loadings, scores, variance, interpretation aids
+#     unrotated_loadings_figure, rotated_loadings_figure
+#     solution_summary_text  - the interpretation aids as text
+#     component_candidates   - ranked candidates for the measure that represents one component
+#
+#   terminal workflow (prints the above and asks; used by pca_analysis.py and the notebook)
+#     report_missing, pca_overview, pca_report, explore_pca, select_representatives
 # =============================================================================
 
-def report_missing(data, network_vars, ctrl_vars, id_col="id"):
+# ---------------------------------------------------------------------------
+# Missing values
+# ---------------------------------------------------------------------------
+
+def missing_summary(data, network_vars, ctrl_vars, id_col="id"):
     """
-    Lists the missing values among the selected variables (count per variable, then the
-    affected neighborhoods with the variables they lack) and says how to deal with them.
-    Returns the per-variable counts: empty when nothing is missing. The component analysis
-    cannot run on missing values, so the callers stop when the result is not empty.
+    Missing values among the selected variables. Returns a dict:
+      counts  : Series of missing counts, only the variables with at least one (empty = fine)
+      rows    : list of (id, [variables missing in that neighborhood])
+      advice  : list of sentences saying how to deal with them
+    The component analysis cannot run on missing values (the correlation matrix is undefined),
+    so the callers stop when counts is not empty.
     """
     variables = list(network_vars) + list(ctrl_vars)
     counts = data[variables].isna().sum()
     counts = counts[counts > 0]
+    rows, advice = [], []
+    if not counts.empty:
+        affected = data[variables].isna().any(axis=1)
+        for _, r in data.loc[affected].iterrows():
+            rows.append((r[id_col], [v for v in variables if pd.isna(r[v])]))
+        if any(v in ctrl_vars for v in counts.index):
+            advice.append("Control variables: fill or drop the values in the neighborhoods layer (the source "
+                          "data), then rerun stage 1 with `python run_analysis.py --reuse`; the network measures "
+                          "come back from the checkpoints in seconds, only the attributes are re-attached.")
+        if any(v in network_vars for v in counts.index):
+            advice.append("Network measures: these neighborhoods have no usable street network at that buffer "
+                          "(no segment within the buffer, or fewer than two nodes). Check the streets layer "
+                          "around them or remove them from the neighborhoods layer, then rerun stage 1.")
+    return {"counts": counts, "rows": rows, "advice": advice}
+
+
+def report_missing(data, network_vars, ctrl_vars, id_col="id"):
+    """
+    Prints the missing values among the selected variables (count per variable, then the
+    affected neighborhoods with the variables they lack) and says how to deal with them.
+    Returns the per-variable counts: empty when nothing is missing.
+    """
+    s = missing_summary(data, network_vars, ctrl_vars, id_col)
+    counts = s["counts"]
     if counts.empty:
         print("No missing values in any of the selected variables.")
         return counts
     print(f"Missing values in {len(counts)} variable(s):")
     print(counts.to_string())
-    rows = data[variables].isna().any(axis=1)
-    print(f"\n{int(rows.sum())} neighborhood(s) affected:")
-    for _, r in data.loc[rows].iterrows():
-        print(f"  {id_col} {r[id_col]}: " + ", ".join(v for v in variables if pd.isna(r[v])))
+    print(f"\n{len(s['rows'])} neighborhood(s) affected:")
+    for nid, missing in s["rows"]:
+        print(f"  {id_col} {nid}: " + ", ".join(missing))
     print("\nThe component analysis cannot run on missing values: the correlation matrix is undefined.")
-    if any(v in ctrl_vars for v in counts.index):
-        print("- Control variables: fill or drop the values in the neighborhoods layer (the source data), "
-              "then rerun stage 1 with `python run_analysis.py --reuse`; the network measures come back "
-              "from the checkpoints in seconds, only the attributes are re-attached.")
-    if any(v in network_vars for v in counts.index):
-        print("- Network measures: these neighborhoods have no usable street network at that buffer "
-              "(no segment within the buffer, or fewer than two nodes). Check the streets layer around them "
-              "or remove them from the neighborhoods layer, then rerun stage 1.")
+    for line in s["advice"]:
+        print(f"- {line}")
     return counts
 
+
+# ---------------------------------------------------------------------------
+# Overview of one variable block (independent of the number of components)
+# ---------------------------------------------------------------------------
 
 def _eigenvalue_table(eigenvalues):
     pct = eigenvalues / eigenvalues.sum() * 100
@@ -279,35 +315,52 @@ def _eigenvalue_table(eigenvalues):
     }).set_index("Component")
 
 
-def pca_overview(data, variables, label=""):
+def overview_stats(data, variables):
     """
-    Stage 1: the diagnostics that do not depend on the number of components.
-    Shows the correlation heatmap of the variables and the scree plot of all
-    eigenvalues (one per variable) with the Kaiser line and the cumulative
-    variance curve, prints the eigenvalue table and the component counts
-    suggested by common rules of thumb. Returns the eigenvalue table.
+    What can be judged before choosing the number of components: the correlation matrix of
+    the standardized variables, all its eigenvalues (one per variable) with the share of
+    variance each explains, and the component counts suggested by common rules of thumb.
+    Returns a dict: variables, n_obs, correlation (DataFrame), eigenvalues (array),
+    table (eigenvalue table indexed by component), rules ({"kaiser": n, "70%": n, "80%": n, "90%": n}).
     """
+    variables = list(variables)
     X = StandardScaler().fit_transform(data[variables])
-    p = len(variables)
-    corr = np.corrcoef(X, rowvar=False)
-    eig = np.sort(np.linalg.eigvalsh(corr))[::-1]
+    corr = pd.DataFrame(np.corrcoef(X, rowvar=False), index=variables, columns=variables)
+    eig = np.sort(np.linalg.eigvalsh(corr.values))[::-1]
     table = _eigenvalue_table(eig)
+    cum = table["Cumulative %"].values
+    rules = {"kaiser": int((eig > 1).sum())}
+    for t in (70, 80, 90):
+        rules[f"{t}%"] = int(np.searchsorted(cum, t) + 1)
+    return {"variables": variables, "n_obs": int(X.shape[0]), "correlation": corr,
+            "eigenvalues": eig, "table": table, "rules": rules}
+
+
+def rules_of_thumb_text(rules):
+    """One line, e.g. 'Kaiser (eigenvalue > 1) -> 6 components; 70% of variance -> 3; ...'."""
+    return (f"Kaiser (eigenvalue > 1) -> {rules['kaiser']} components; "
+            + "; ".join(f"{t}% of variance -> {rules[f'{t}%']}" for t in (70, 80, 90)))
+
+
+def correlation_figure(stats, label=""):
+    """Heatmap of the correlation matrix (values annotated up to 20 variables). Returns the figure."""
+    corr = stats["correlation"]
+    p = len(stats["variables"])
     title = f" ({label})" if label else ""
-
-    print(f"\n=== PCA overview{title}: {p} variables, {X.shape[0]} observations ===")
-
-    # ----- Correlation heatmap -----
     size = min(0.45 * p + 4, 22)
-    plt.figure(figsize=(size, size * 0.85))
-    sns.heatmap(pd.DataFrame(corr, index=variables, columns=variables),
-                cmap="coolwarm", center=0, vmin=-1, vmax=1,
-                annot=(p <= 20), fmt=".2f", square=True,
-                cbar_kws={"label": "Pearson r"})
+    fig = plt.figure(figsize=(size, size * 0.85))
+    sns.heatmap(corr, cmap="coolwarm", center=0, vmin=-1, vmax=1,
+                annot=(p <= 20), fmt=".2f", square=True, cbar_kws={"label": "Pearson r"})
     plt.title(f"Correlation matrix{title}")
-    plt.tight_layout()
-    plt.show()
+    fig.tight_layout()
+    return fig
 
-    # ----- Scree plot with cumulative variance -----
+
+def scree_figure(stats, label=""):
+    """Scree plot of all eigenvalues with the Kaiser line and the cumulative variance curve."""
+    table = stats["table"]
+    p = len(stats["variables"])
+    title = f" ({label})" if label else ""
     fig, ax1 = plt.subplots(figsize=(11, 5))
     ax1.plot(table.index, table["Eigenvalue"], marker="o", color="tab:blue", label="Eigenvalue")
     ax1.axhline(1, color="gray", linestyle="--", label="Kaiser criterion (eigenvalue = 1)")
@@ -323,69 +376,65 @@ def pca_overview(data, variables, label=""):
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
     ax1.legend(h1 + h2, l1 + l2, loc="center right")
-    plt.title(f"Scree plot{title}: all {p} components")
-    plt.tight_layout()
+    ax2.set_title(f"Scree plot{title}: all {p} components")
+    fig.tight_layout()
+    return fig
+
+
+def pca_overview(data, variables, label=""):
+    """
+    Terminal version of the overview: shows the correlation heatmap and the scree plot,
+    prints the eigenvalue table and the rules of thumb. Returns the eigenvalue table.
+    """
+    stats = overview_stats(data, variables)
+    title = f" ({label})" if label else ""
+    print(f"\n=== PCA overview{title}: {len(stats['variables'])} variables, {stats['n_obs']} observations ===")
+    correlation_figure(stats, label)
     plt.show()
-
-    display(table.round(3))
-    kaiser = int((eig > 1).sum())
-    cum = table["Cumulative %"].values
-    rules = "; ".join(f"{t}% of variance -> {int(np.searchsorted(cum, t) + 1)}" for t in (70, 80, 90))
-    print(f"Rules of thumb: Kaiser (eigenvalue > 1) -> {kaiser} components; {rules}")
-    return table
+    scree_figure(stats, label)
+    plt.show()
+    display(stats["table"].round(3))
+    print(f"Rules of thumb: {rules_of_thumb_text(stats['rules'])}")
+    return stats["table"]
 
 
-def pca_report(data, variables, n_factors, rotation="varimax", method="minres",
-               loading_threshold=0.5, communality_threshold=0.5):
+# ---------------------------------------------------------------------------
+# One candidate solution
+# ---------------------------------------------------------------------------
+
+def fit_solution(data, variables, n_factors, rotation="varimax", method="minres",
+                 loading_threshold=0.5, communality_threshold=0.5):
     """
-    Stage 2: the full diagnostic report for one candidate number of components:
-    unrotated and rotated loadings (tables and heatmaps), communalities,
-    variance explained per rotated component, and interpretation aids
-    (salient loadings per component, cross-loading variables, variables not
-    captured by any component, low communalities).
-    Returns a dict holding every matrix so the chosen solution can be reused.
+    Fits one candidate number of components and returns everything about it in a dict:
+      n_factors, rotation, method
+      unrotated_loadings, rotated_loadings   (DataFrames: variables x components)
+      communalities                          (DataFrame: Variable, Communalities)
+      unrotated_scores, rotated_scores       (DataFrames: observations x components)
+      eigenvalues                            (array, all of them)
+      variance_table                         (SS loadings, % Variance, Cumulative % per rotated component)
+      salient          {component: Series of the loadings with |loading| >= loading_threshold, largest first}
+      cross_loading    [variables salient on more than one component]
+      not_salient      [variables salient on no component]
+      low_communality  DataFrame of the variables with communality < communality_threshold
+    Raises whatever the fit raises (e.g. a solution the extraction method cannot fit).
     """
-    print(f"\n{'=' * 78}\n REPORT: {n_factors} component(s)   rotation = {rotation}   method = {method}\n{'=' * 78}")
+    variables = list(variables)
     (unrot_load, rot_load, communalities, unrot_scores, rot_scores,
-     eigenvalues, rot_var_share) = factor_loading_matrices(
-        data, variables, n_factors, rotation=rotation, method=method,
-        plot=True, verbose=False, show_scree=False)
+     eigenvalues, _) = factor_loading_matrices(
+        data, variables, n_factors, rotation=rotation, method=method, plot=False, verbose=False)
 
-    # ----- Variance explained by the rotated components -----
     ss = (rot_load ** 2).sum(axis=0)
     var_tab = pd.DataFrame({"SS loadings": ss, "% Variance": ss / len(variables) * 100})
     var_tab["Cumulative %"] = var_tab["% Variance"].cumsum()
-    print("\nVariance explained by the rotated components:")
-    display(var_tab.round(3))
-    print(f"Total variance retained by {n_factors} component(s): {var_tab['Cumulative %'].iloc[-1]:.1f}%")
 
-    # ----- Matrices -----
-    print("\nUnrotated loadings:")
-    display(unrot_load.round(3))
-    print(f"\nRotated loadings ({rotation}):")
-    display(rot_load.round(3))
-    print("\nCommunalities (share of each variable's variance captured by the solution):")
-    display(communalities.set_index("Variable").round(3).T)
-
-    # ----- Interpretation aids -----
-    print(f"\nSalient loadings (|loading| >= {loading_threshold}) per component:")
+    salient = {}
     for comp in rot_load.columns:
         s = rot_load[comp]
-        s = s[s.abs() >= loading_threshold].sort_values(key=np.abs, ascending=False)
-        print(f"  {comp}: " + (", ".join(f"{v} ({s[v]:+.2f})" for v in s.index) or "none"))
-
-    salient = rot_load.abs() >= loading_threshold
-    cross = salient.sum(axis=1)
-    cross = cross[cross > 1]
-    print("\nCross-loading variables (salient on more than one component): "
-          + (", ".join(cross.index) if len(cross) else "none"))
+        salient[comp] = s[s.abs() >= loading_threshold].sort_values(key=np.abs, ascending=False)
+    is_salient = rot_load.abs() >= loading_threshold
+    cross = is_salient.sum(axis=1)
     weak = rot_load.abs().max(axis=1)
-    weak = weak[weak < loading_threshold]
-    print("Variables not salient on any component: "
-          + (", ".join(weak.index) if len(weak) else "none"))
     low = communalities[communalities["Communalities"] < communality_threshold]
-    print(f"Low communality (< {communality_threshold}): "
-          + (", ".join(f"{r.Variable} ({r.Communalities:.2f})" for r in low.itertuples()) if len(low) else "none"))
 
     return {
         "n_factors": n_factors, "rotation": rotation, "method": method,
@@ -393,7 +442,76 @@ def pca_report(data, variables, n_factors, rotation="varimax", method="minres",
         "communalities": communalities,
         "unrotated_scores": unrot_scores, "rotated_scores": rot_scores,
         "eigenvalues": eigenvalues, "variance_table": var_tab,
+        "loading_threshold": loading_threshold, "communality_threshold": communality_threshold,
+        "salient": salient,
+        "cross_loading": list(cross[cross > 1].index),
+        "not_salient": list(weak[weak < loading_threshold].index),
+        "low_communality": low,
     }
+
+
+def _loadings_heatmap(loadings, title):
+    fig = plt.figure(figsize=(15, 12))
+    sns.heatmap(loadings, annot=True, cmap="coolwarm", center=0, fmt=".2f", cbar_kws={"label": "Loading"})
+    plt.title(title)
+    return fig
+
+
+def unrotated_loadings_figure(report):
+    return _loadings_heatmap(report["unrotated_loadings"],
+                             f"Unrotated Component Loadings ({report['n_factors']} components)")
+
+
+def rotated_loadings_figure(report):
+    return _loadings_heatmap(report["rotated_loadings"],
+                             f"Rotated Component Loadings ({report['rotation']}, {report['n_factors']} components)")
+
+
+def solution_summary_text(report):
+    """The interpretation aids of a solution as text (one line per item), as the terminal prints them."""
+    lines = [f"Salient loadings (|loading| >= {report['loading_threshold']}) per component:"]
+    for comp, s in report["salient"].items():
+        lines.append(f"  {comp}: " + (", ".join(f"{v} ({s[v]:+.2f})" for v in s.index) or "none"))
+    lines.append("")
+    lines.append("Cross-loading variables (salient on more than one component): "
+                 + (", ".join(report["cross_loading"]) or "none"))
+    lines.append("Variables not salient on any component: " + (", ".join(report["not_salient"]) or "none"))
+    low = report["low_communality"]
+    lines.append(f"Low communality (< {report['communality_threshold']}): "
+                 + (", ".join(f"{r.Variable} ({r.Communalities:.2f})" for r in low.itertuples()) if len(low) else "none"))
+    return "\n".join(lines)
+
+
+def pca_report(data, variables, n_factors, rotation="varimax", method="minres",
+               loading_threshold=0.5, communality_threshold=0.5):
+    """
+    Terminal version of the report for one candidate number of components: shows the
+    loadings heatmaps, prints the variance explained, the matrices, the communalities and
+    the interpretation aids. Returns the dict from fit_solution().
+    """
+    print(f"\n{'=' * 78}\n REPORT: {n_factors} component(s)   rotation = {rotation}   method = {method}\n{'=' * 78}")
+    report = fit_solution(data, variables, n_factors, rotation=rotation, method=method,
+                          loading_threshold=loading_threshold, communality_threshold=communality_threshold)
+    unrotated_loadings_figure(report)
+    plt.show()
+    rotated_loadings_figure(report)
+    plt.show()
+
+    var_tab = report["variance_table"]
+    print("\nVariance explained by the rotated components:")
+    display(var_tab.round(3))
+    print(f"Total variance retained by {n_factors} component(s): {var_tab['Cumulative %'].iloc[-1]:.1f}%")
+
+    print("\nUnrotated loadings:")
+    display(report["unrotated_loadings"].round(3))
+    print(f"\nRotated loadings ({rotation}):")
+    display(report["rotated_loadings"].round(3))
+    print("\nCommunalities (share of each variable's variance captured by the solution):")
+    display(report["communalities"].set_index("Variable").round(3).T)
+
+    print()
+    print(solution_summary_text(report))
+    return report
 
 
 def explore_pca(data, variables, label, rotation="varimax", method="minres"):
@@ -450,6 +568,39 @@ def explore_pca(data, variables, label, rotation="varimax", method="minres"):
     return n_final, reports[n_final]
 
 
+# ---------------------------------------------------------------------------
+# Representative measures
+# ---------------------------------------------------------------------------
+
+def component_candidates(report, component, exclude=(), top_k=5):
+    """
+    The measures that could stand for one rotated component, ranked by absolute loading,
+    leaving out those in `exclude` (already taken by another component). Each candidate is a
+    dict: measure, loading (on this component), max_elsewhere (its largest absolute loading
+    on any other component, None if there is none) and where (that component).
+    """
+    rot = report["rotated_loadings"]
+    ranked = rot[component].abs().sort_values(ascending=False)
+    out = []
+    for v in ranked.index:
+        if v in exclude:
+            continue
+        others = rot.loc[v].drop(component).abs()
+        out.append({"measure": v, "loading": float(rot.loc[v, component]),
+                    "max_elsewhere": float(others.max()) if len(others) else None,
+                    "where": others.idxmax() if len(others) else None})
+        if len(out) == top_k:
+            break
+    return out
+
+
+def candidate_text(c):
+    """One line describing a candidate, e.g. 'int_den075   loading +0.96   max elsewhere 0.12 on Component 2'."""
+    cross = (f"max elsewhere {c['max_elsewhere']:.2f} on {c['where']}" if c["max_elsewhere"] is not None
+             else "no other component")
+    return f"{c['measure']:<12s} loading {c['loading']:+.2f}   {cross}"
+
+
 def select_representatives(report, label="", top_k=5):
     """
     Interactive choice of one original measure to stand for each rotated component
@@ -468,20 +619,18 @@ def select_representatives(report, label="", top_k=5):
     print("Rule of thumb: the highest absolute loading; when two are close, prefer the one with the "
           "smaller cross-loading and the clearer theoretical meaning.")
     for comp in rot.columns:
-        ranked = rot[comp].abs().sort_values(ascending=False)
-        candidates = [v for v in ranked.index if v not in chosen][:top_k]
+        candidates = component_candidates(report, comp, exclude=chosen, top_k=top_k)
+        names = [c["measure"] for c in candidates]
         print(f"\n{comp}:")
-        for i, v in enumerate(candidates, 1):
-            others = rot.loc[v].drop(comp).abs()
-            cross = f"max elsewhere {others.max():.2f} on {others.idxmax()}" if len(others) else "no other component"
-            print(f"  {i}. {v:<12s} loading {rot.loc[v, comp]:+.2f}   {cross}")
+        for i, c in enumerate(candidates, 1):
+            print(f"  {i}. {candidate_text(c)}")
         while True:
-            ans = input(f"  Measure for {comp} [{candidates[0]}]: ").strip()
+            ans = input(f"  Measure for {comp} [{names[0]}]: ").strip()
             if ans == "":
-                pick = candidates[0]
+                pick = names[0]
                 break
-            if ans.isdigit() and 1 <= int(ans) <= len(candidates):
-                pick = candidates[int(ans) - 1]
+            if ans.isdigit() and 1 <= int(ans) <= len(names):
+                pick = names[int(ans) - 1]
                 break
             if ans in rot.index and ans not in chosen:
                 pick = ans

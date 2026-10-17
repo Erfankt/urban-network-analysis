@@ -53,12 +53,15 @@ class StreetNetworkProcessor:
     graph-theoretic measures for Neighborhood Planning Areas (NPAs).
     """
 
-    def __init__(self, source_edges_path, NPA_shape_path):
+    def __init__(self, source_edges_path, NPA_shape_path, id_col="id"):
         """
         Initializes the processor by setting up file paths and loading the base data.
+        id_col is the column of the neighborhood layer that identifies each neighborhood
+        (unique, no missing values); it keys the checkpoints and is carried into the output.
         """
         self.source_edges_path = source_edges_path
         self.NPA_shape_path = NPA_shape_path
+        self.id_col = id_col
 
         # Instance attributes to hold GeoDataFrames across processing steps
         self.source_edges = None  # Version 1 edges (with start/end node IDs)
@@ -81,8 +84,11 @@ class StreetNetworkProcessor:
 
         # 2. Load NPA polygons: these define the study area boundaries
         self.NPA_shape = gpd.read_file(self.NPA_shape_path)
-        if "id" not in self.NPA_shape.columns:
-            raise ValueError("Neighborhood layer must have a unique identifier column named 'id'.")
+        if self.id_col not in self.NPA_shape.columns:
+            raise ValueError(f"Neighborhood layer has no column '{self.id_col}' (the unique identifier).")
+        ids = self.NPA_shape[self.id_col]
+        if ids.isna().any() or ids.duplicated().any():
+            raise ValueError(f"Neighborhood identifier column '{self.id_col}' must be unique and complete.")
 
         # 3. Edges and polygons must share a projected CRS (buffers are in feet);
         #    the neighborhoods are reprojected to the streets CRS when they differ
@@ -268,6 +274,17 @@ class StreetNetworkProcessor:
         """
         checkpoint_dir = self._checkpoint_dir()
         print(f"Checkpoints: {checkpoint_dir}")
+        if recompute:
+            # drop the checkpoints of this run's buffers now, not buffer by buffer: a recompute run that is
+            # interrupted and then resumed must not fall back on the old files of the buffers it never reached
+            removed = 0
+            for b in buffer_list_mile:
+                path = self._checkpoint_path(checkpoint_dir, b)
+                if os.path.exists(path):
+                    os.remove(path)
+                    removed += 1
+            if removed:
+                print(f"Recompute: {removed} existing checkpoint file(s) of these buffers removed.")
 
         for self.buffer_mile in buffer_list_mile:
             self.buffer_distance_feet = self.buffer_mile * 5280  # Convert miles to feet
@@ -292,8 +309,10 @@ class StreetNetworkProcessor:
         """
         h = hashlib.sha1()
         h.update(b"".join(w for w in self.source_edges.geometry.to_wkb() if w is not None))
-        h.update("|".join(self.NPA_shape["id"].astype(str)).encode("utf-8"))
+        h.update("|".join(self.NPA_shape[self.id_col].astype(str)).encode("utf-8"))
         h.update(b"".join(w for w in self.NPA_shape.geometry.to_wkb() if w is not None))
+        if self.id_col != "id":                 # the default keeps the fingerprints of earlier runs
+            h.update(f"|id_col={self.id_col}".encode("utf-8"))
         return h.hexdigest()[:10]
 
     def _checkpoint_dir(self):
@@ -306,6 +325,7 @@ class StreetNetworkProcessor:
                 json.dump({
                     "streets": self.source_edges_path,
                     "neighborhoods": self.NPA_shape_path,
+                    "id_column": self.id_col,
                     "segments": int(len(self.source_edges)),
                     "neighborhood_count": int(len(self.NPA_shape)),
                     "crs": crs_label(self.source_edges.crs),
@@ -336,11 +356,11 @@ class StreetNetworkProcessor:
             raw = raw[:raw.rfind(b"\n") + 1]
         if not raw.strip():
             return pd.DataFrame(columns=columns)
-        df = pd.read_csv(io.BytesIO(raw), dtype={"id": str})
+        df = pd.read_csv(io.BytesIO(raw), dtype={columns[0]: str})
         if list(df.columns) != columns:
             raise ValueError(f"{path} has columns {list(df.columns)}, expected {columns}; "
                              "delete the file or run with --recompute")
-        return df.drop_duplicates("id", keep="last")
+        return df.drop_duplicates(columns[0], keep="last")
 
     def _process_single_buffer(self, checkpoint_path, recompute=False):
         """
@@ -348,10 +368,10 @@ class StreetNetworkProcessor:
         buffer distance, appending every neighborhood's row to the checkpoint as soon as it is
         done; neighborhoods already in the checkpoint are skipped (unless recompute).
         """
-        columns = ["id"] + [f"{m}{self.buffer_mile_name}" for m in NETWORK_METRICS]
+        columns = [self.id_col] + [f"{m}{self.buffer_mile_name}" for m in NETWORK_METRICS]
         done = pd.DataFrame(columns=columns) if recompute else self._read_checkpoint(checkpoint_path, columns)
-        all_ids = self.NPA_shape["id"].astype(str)
-        todo = self.NPA_shape[~all_ids.isin(set(done["id"]))]
+        all_ids = self.NPA_shape[self.id_col].astype(str)
+        todo = self.NPA_shape[~all_ids.isin(set(done[self.id_col]))]
 
         if len(done):
             print(f"Checkpoint: {len(done)} of {len(all_ids)} neighborhoods already measured, "
@@ -374,7 +394,7 @@ class StreetNetworkProcessor:
 
             buffer_desc = f"Analyzing NPAs ({self.buffer_mile} mi)"
             for idx, polygon in tqdm(buffered_NPA.iterrows(), total=len(buffered_NPA), desc=buffer_desc):
-                NPA_id = polygon['id']
+                NPA_id = polygon[self.id_col]
 
                 # --- Step 3: Extract Local Network ---
                 edge_NPA = self.edges_version_2[self.edges_version_2.intersects(polygon.geometry)].copy()
@@ -555,17 +575,17 @@ class StreetNetworkProcessor:
         the requested buffers: the neighborhoods layer with the measure columns appended.
         """
         npa_merged = self.NPA_shape.copy()
-        key = npa_merged["id"].astype(str)
+        key = npa_merged[self.id_col].astype(str)
 
         for buffer_mile in buffer_list_mile:
             code = self.buffer_code(buffer_mile)
-            columns = ["id"] + [f"{m}{code}" for m in NETWORK_METRICS]
+            columns = [self.id_col] + [f"{m}{code}" for m in NETWORK_METRICS]
             df = self._read_checkpoint(self._checkpoint_path(checkpoint_dir, buffer_mile), columns)
-            missing = set(key) - set(df["id"])
+            missing = set(key) - set(df[self.id_col])
             if missing:
                 raise RuntimeError(f"buffer {buffer_mile} mi: {len(missing)} neighborhoods are not in the "
                                    "checkpoint; run again to complete it")
-            df = df.set_index("id").reindex(key)
+            df = df.set_index(self.id_col).reindex(key)
             for c in columns[1:]:
                 npa_merged[c] = df[c].to_numpy(dtype=float)
 

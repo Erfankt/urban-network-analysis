@@ -1,0 +1,9 @@
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+# layers uploaded on the Inputs page can be large (MB)
+maxUploadSize = 1000
