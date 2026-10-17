@@ -39,32 +39,33 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
 
 ## Setup
 
-Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder.
+Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, .venv, in the repository folder. There are two ways to set it up; the second is only for the terminal scripts.
 
-1. Create the environment (first time only):
+From the web interface (the easy way). You need Python and nothing else. From the repository folder:
 
-```bash
 python -m venv .venv
-```
+then activate it (step 2 below), install the one package the interface itself needs, and start it:
 
-2. Activate it (in every new terminal; the prompt then starts with `(.venv)`):
+pip install streamlit
+streamlit run app/streamlit_app.py
+The first section of the page, 0 · Setup, checks the Python version, whether .venv exists and whether the app runs inside it, and every package of requirements.txt with its pinned version. If all is in place it shows a single line ("Python 3.11 · 16 packages in place · running in the virtual environment .venv", with the package table under Details) and the page goes straight on to the inputs. If something is missing it shows only the Setup section: the missing or mismatched packages (hover over scikit-learn for why it is pinned below 1.6), an optional tick for Jupyter (only the notebook version of stage 2 needs it), and the choice of where to install: a new .venv, the existing one, or the Python that runs the app. One button does it, with the pip output shown live. Installing into the running Python carries on by itself; installing into a .venv that the app is not running in ends with a Restart the app button that starts the app again inside it (same port, same terminal) and reloads the page. The step needs an internet connection and takes a few minutes the first time.
 
-```bash
+From the terminal (for the scripts). Create and fill the environment once; if .venv already exists with the requirements installed (the check below tells), skip steps 1 and 3 and only activate it in each new terminal.
+
+Create the environment (first time only):
+python -m venv .venv
+Activate it (in every new terminal; the prompt then starts with (.venv)):
 # Windows, Command Prompt
 .venv\Scripts\activate
 # Windows, PowerShell
 .venv\Scripts\Activate.ps1
 # macOS / Linux
 source .venv/bin/activate
-```
-
-3. Install the dependencies (first time, or after `requirements.txt` changes):
-
-```bash
+Install the dependencies (first time, or after requirements.txt changes):
 pip install -r requirements.txt
-```
+To see whether an existing environment is already complete, activate it and run python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)": if it prints a version below 1.6 without an error, skip step 3. requirements.txt pins scikit-learn<1.6 because factor_analyzer 0.5.x fails with newer scikit-learn releases, so an error such as check_array() got an unexpected keyword argument 'force_all_finite' means the script is running outside this environment, with a newer scikit-learn: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment. The last group of requirements.txt (Streamlit and three small packages) is only needed for the web interface.
 
-To see whether an existing environment is already complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"`: if it prints a version below 1.6 without an error, skip step 3. `requirements.txt` pins `scikit-learn<1.6` because `factor_analyzer` 0.5.x fails with newer scikit-learn releases, so an error such as `check_array() got an unexpected keyword argument 'force_all_finite'` means the script is running outside this environment, with a newer scikit-learn: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment. The last group of `requirements.txt` (Streamlit and three small packages) is only needed for the web interface.
+To start over, close every terminal and the app that use the environment and delete the .venv folder (rmdir /s /q .venv on Windows Command Prompt, Remove-Item -Recurse -Force .venv in PowerShell, rm -rf .venv on macOS and Linux); nothing else in the repository is touched, and the Setup section of the app (or the steps above) recreates it.
 
 ## Input data
 
