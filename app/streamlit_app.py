@@ -45,16 +45,15 @@ def step_states():
     present, _ = pl.final_outputs()
     built = bool(present["csv"] and present["dictionary"])
     st1_state, st1_label = STAGE1_STATE[s1]
-    if s1 == "none" and measures:
-        st1_state, st1_label = "done", "Measures from an earlier run"
+    fresh = measures and (not pl.LAUNCH_TIME or pl.measures_mtime() >= pl.LAUNCH_TIME or st.session_state.get("s2_started"))
     if s1 == "finished" and not measures:
         st1_state, st1_label = "warn", "Finished, measures do not match"
     return [
         ("inputs", "Inputs", *(("done", "Layers ready") if run.get("inputs") else ("wait", "Choose the layers"))),
         ("stage-1", "Stage 1: network measures", st1_state, st1_label),
         ("stage-2", "Stage 2: component analysis",
-         *(("done", "Dataset built") if built else ("ready", "Ready to analyze") if measures
-           else ("wait", "Waiting for stage 1"))),
+         *(("done", "Dataset built") if built else ("ready", "Ready to analyze") if fresh
+           else ("wait", "Not started"))),
         ("final-dataset", "Final dataset", *(("done", "Ready to download") if built else ("wait", "Not built yet"))),
     ]
 

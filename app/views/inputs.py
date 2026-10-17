@@ -85,8 +85,9 @@ def _layer_picker(label, kind, found, current):
             return None
         choice_key = f"{key}_choice"
         if st.session_state.get(choice_key) not in found:
-            st.session_state[choice_key] = current if current in found else found[0]
-        return st.selectbox(f"{label}: layer", found, key=choice_key, label_visibility="collapsed",
+            st.session_state.pop(choice_key, None)          # nothing is chosen until the user chooses
+        return st.selectbox(f"{label}: layer", found, index=None, placeholder="Choose a layer…", key=choice_key,
+                            label_visibility="collapsed",
                             format_func=lambda p: f"{Path(p).name}  ·  data/{folder}/")
     st.file_uploader("Files from this computer", accept_multiple_files=True, key=f"{key}_upload",
                      type=LAYER_TYPES, help=UPLOAD_HELP, on_change=_save_upload, args=(kind, key))
@@ -197,40 +198,13 @@ def _neighborhoods_panel(p):
 
 # ---- restoring the inputs after a browser refresh -----------------------------------------------------------
 def _initial_paths():
-    """The layers the pipeline last ran with (user_selection.json) when their files are still there, else the defaults."""
-    try:
-        sel = pl.load_selection()
-        if os.path.exists(sel["streets_path"]) and os.path.exists(sel["neighborhoods_path"]):
-            return dict(streets=sel["streets_path"], neighborhoods=sel["neighborhoods_path"], id_col=pl.id_column(sel))
-    except Exception:
-        pass
-    return dict(streets=pl.DEFAULTS["streets_path"], neighborhoods=pl.DEFAULTS["neighborhoods_path"])
+    """Every launch starts with nothing chosen: the user picks the layers (earlier choices are not carried over)."""
+    return dict(streets=None, neighborhoods=None)
 
 
 def restore_inputs():
-    """
-    After a browser refresh the session is new: take the inputs back from the saved selection
-    (user_selection.json) when its files are still there and valid. Returns the inputs record or None.
-    """
-    run = st.session_state.run
-    if run.get("inputs"):
-        return run["inputs"]
-    try:
-        sel = pl.load_selection()
-    except Exception:
-        return None
-    streets, nbhd, id_col = sel["streets_path"], sel["neighborhoods_path"], pl.id_column(sel)
-    if not (os.path.exists(streets) and os.path.exists(nbhd)):
-        return None
-    try:
-        info = pl.check_inputs(_layers(streets, nbhd, _mtimes(streets, nbhd)), id_col)
-    except Exception:
-        return None
-    if info["problems"]:
-        return None
-    st.session_state.setdefault("paths", {}).update(streets=streets, neighborhoods=nbhd, id_col=id_col)
-    run["inputs"] = _record(info)
-    return run["inputs"]
+    """The inputs checked in this session, or None: a new session (launch or browser refresh) starts empty."""
+    return st.session_state.run.get("inputs")
 
 
 # ---- the page -------------------------------------------------------------------------------------------------

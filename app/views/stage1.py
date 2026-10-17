@@ -130,12 +130,6 @@ def render():
     status = pl.stage1_status()
     running = status["state"] == "running"
     prev = (status["run"] or {}).get("selection")
-    if prev is None:                                   # no app run yet: offer the choices of the last terminal run
-        try:
-            prev = pl.load_selection()
-        except Exception:
-            prev = None
-
     if inputs is None and status["state"] == "none":
         st.info("Choose and check the inputs in section 1 first.")
         return
