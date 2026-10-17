@@ -21,15 +21,40 @@ APP_DIR = Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-import pipeline as pl                                  # noqa: E402  (also switches the working directory to src/)
-import chat_panel                                      # noqa: E402
-from views import inputs, stage1, stage2, final        # noqa: E402
+import theme                                           # noqa: E402
+import setup_env                                       # noqa: E402  (standard library and Streamlit only)
+
+# Stage 0: the environment. Only when it is complete are the heavy packages imported, so that a missing one
+# shows the setup step instead of a traceback.
+theme.inject()
+env = setup_env.environment()
+import_error = None
+if setup_env.ready(env):
+    try:
+        import pipeline as pl                          # noqa: E402  (also switches the working directory to src/)
+        import chat_panel                              # noqa: E402
+        from views import inputs, stage1, stage2, final    # noqa: E402
+    except Exception as e:                             # a package that is installed but does not load
+        import_error = e
+if import_error is not None or not setup_env.ready(env):
+    with st.sidebar:
+        st.markdown(theme.sidebar_head(), unsafe_allow_html=True)
+    _, middle, _ = st.columns([1, 3, 1])
+    with middle:
+        theme.title_bar()
+        with st.container(key="sec-setup"):
+            st.markdown(theme.section_head(0, "Setup", "setup", "warn", "Needs setup"), unsafe_allow_html=True)
+            if import_error is not None:
+                st.error(f"The packages are listed but the app could not load them: {import_error}. "
+                         "Installing them again usually fixes it.")
+                env["needs"] = [dict(r, status="reinstall") for r in env["rows"] if not r["optional"]]
+            setup_env.render(env)
+        theme.footer()
+    st.stop()
 
 if "run" not in st.session_state:
     st.session_state.run = {"inputs": None, "stage1": None, "stage2": None, "final": None}
     st.session_state.chat = []
-
-import theme                                           # noqa: E402
 
 STEPS = [("inputs", "Inputs", inputs), ("stage-1", "Stage 1: network measures", stage1),
          ("stage-2", "Stage 2: component analysis", stage2), ("final-dataset", "Final dataset", final)]
@@ -49,6 +74,7 @@ def step_states():
     if s1 == "finished" and not measures:
         st1_state, st1_label = "warn", "Finished, measures do not match"
     return [
+        ("setup", "Setup", "done", "Environment ready"),
         ("inputs", "Inputs", *(("done", "Layers ready") if run.get("inputs") else ("wait", "Choose the layers"))),
         ("stage-1", "Stage 1: network measures", st1_state, st1_label),
         ("stage-2", "Stage 2: component analysis",
@@ -96,6 +122,9 @@ main, side = st.columns([2.4, 1], gap="large")
 with main:
     theme.title_bar()
     heads = []
+    with st.container(key="sec-setup-ready"):             # Stage 0, a one-line note once the environment is ready
+        heads.append(st.empty())
+        setup_env.render(env)
     for anchor, _, view in STEPS:
         with st.container(key=f"sec-{anchor}"):
             heads.append(st.empty())          # the header is filled in after the section ran, with its final status
@@ -104,7 +133,7 @@ with main:
 
 states = step_states()
 current = current_step(states)
-for i, (head, (anchor, title, state, label)) in enumerate(zip(heads, states), start=1):
+for i, (head, (anchor, title, state, label)) in enumerate(zip(heads, states), start=0):
     head.markdown(theme.section_head(i, title, anchor, state, label), unsafe_allow_html=True)
 stepper_slot.markdown(theme.stepper(states, current), unsafe_allow_html=True)
 STEP_NAMES = {"inputs": "Inputs", "stage-1": "Stage 1", "stage-2": "Stage 2", "final-dataset": "Final dataset"}

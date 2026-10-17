@@ -42,6 +42,10 @@ h4 {{ font-size: 1.12rem; margin-top: .6rem; }}
                           padding: 1.5rem 1.8rem 1.7rem; margin-bottom: 1.6rem;
                           background: rgba(127,127,127,.045);
                           box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 14px 30px -18px rgba(0,0,0,.28); }}
+[class*="st-key-sec-setup-ready"] {{ padding: .85rem 1.4rem; margin-bottom: 1.1rem; }}
+[class*="st-key-sec-setup-ready"] .sec-head {{ margin-bottom: .35rem; }}
+[class*="st-key-sec-setup-ready"] .sec-title {{ font-size: 1.15rem; }}
+[class*="st-key-sec-setup-ready"] .sec-badge {{ width: 1.7rem; height: 1.7rem; font-size: .85rem; }}
 .sec-anchor {{ scroll-margin-top: 4.5rem; height: 0; }}
 .sec-head {{ display: flex; align-items: center; gap: .85rem; margin: -.2rem 0 .9rem; flex-wrap: wrap; }}
 .sec-badge {{ flex: none; width: 2.15rem; height: 2.15rem; border-radius: 50%; background: {TEAL}; color: #fff;
@@ -113,7 +117,7 @@ def stepper(steps, current):
         f'<div class="step {state}{" current" if anchor == current else ""}"><i></i>'
         f'<a href="#{anchor}"><div class="t">{i}  ·  {html.escape(title)}</div>'
         f'<div class="s">{html.escape(label)}</div></a></div>'
-        for i, (anchor, title, state, label) in enumerate(steps, start=1))
+        for i, (anchor, title, state, label) in enumerate(steps, start=0))
     return f'<div class="stepper">{items}</div>'
 
 
