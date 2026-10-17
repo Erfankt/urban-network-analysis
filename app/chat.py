@@ -155,17 +155,17 @@ def stream_reply(cfg, system, messages):
 
 ROLE = """You are the assistant built into a web app that runs a data pipeline for research on urban \
 street networks and property crime (Kefayat & Thill, 2025, ISPRS IJGI 14(5):200). The user moves \
-through four pages: Inputs, Stage 1 (street-network measures), Stage 2 (component analysis) and \
+through four sections of one page: Inputs, Stage 1 (street-network measures), Stage 2 (component analysis) and \
 Final dataset. You explain the steps, the measures and the diagnostics, and you interpret the numbers \
 of the current run that are given to you below, suggesting choices with your reasons; the user makes \
-every choice by clicking in the pages. You cannot run anything, change files or see anything beyond \
+every choice by clicking in the app. You cannot run anything, change files or see anything beyond \
 what is given here. When a number you need is not in the run description, say that it is not available \
-yet and which page produces it. Answer briefly and concretely, in plain language, and quote the \
+yet and which section produces it. Answer briefly and concretely, in plain language, and quote the \
 numbers you rely on."""
 
 METHOD_NOTES = """METHOD NOTES
 Inputs: a cleaned street centerline layer (projected CRS in US feet; it defines the working CRS) and \
-neighborhood polygons with an identifier column (unique, chosen on the Inputs page; `id` in the paper's \
+neighborhood polygons with an identifier column (unique, chosen in the Inputs section; `id` in the paper's \
 data), a crime-count column and numeric control variables. The neighborhoods are reprojected to the \
 streets CRS when they differ.
 Stage 1 builds the street network (nodes at segment endpoints; degree-2 nodes removed so nodes are \
@@ -202,14 +202,14 @@ def _table_text(df, max_rows=12):
 
 def describe_run(run, page):
     """The current run as text for the system message. `run` is the app's run-state dict."""
-    out = [f"CURRENT RUN (the user is on the page: {page})"]
+    out = [f"CURRENT RUN (the user is at the step: {page})"]
     inp = run.get("inputs")
     if inp:
         out.append(f"Inputs checked: {inp.get('summary', '')}. Identifier column: {inp.get('id_col', 'id')}. "
                    f"Numeric columns available: {', '.join(inp.get('columns', [])) or 'none'}."
                    + (f" Note: {inp['note']}." if inp.get("note") else ""))
     else:
-        out.append("Inputs: not checked yet (Inputs page).")
+        out.append("Inputs: not chosen yet (Inputs section).")
     s1 = run.get("stage1")
     if s1:
         sel = s1.get("selection", {})
@@ -258,7 +258,7 @@ def system_message(run, page):
 SUGGESTIONS = {
     "Inputs": ["What must the two input layers contain?",
                "Why do the streets have to be in a CRS in feet?",
-               "What does the CRS note mean?"],
+               "What does the CRS warning mean?"],
     "Stage 1": ["What do the buffer distances mean, and why five of them?",
                 "Explain the eight measures in one line each.",
                 "Why do the larger buffers take so much longer?"],

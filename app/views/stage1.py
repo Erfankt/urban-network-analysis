@@ -1,4 +1,4 @@
-"""Page 2: stage 1, run_analysis.py in the background, with progress read from the checkpoints."""
+"""Section 2: stage 1, run_analysis.py in the background, with progress read from the checkpoints."""
 import time
 import streamlit as st
 
@@ -119,7 +119,7 @@ def _progress_panel(status):
 
 
 def render():
-    st.title("2 · Stage 1: street-network measures")
+    st.header("2 · Stage 1: street-network measures", anchor="stage-1")
     st.markdown(
         "Builds the street network (intersections and dead ends as nodes), buffers every neighborhood by the "
         "chosen distances, keeps the largest connected component inside each buffer and measures it with the "
@@ -138,12 +138,12 @@ def render():
             prev = None
 
     if inputs is None and status["state"] == "none":
-        st.info("Check the inputs on page 1 first.")
+        st.info("Choose and check the inputs in section 1 first.")
         return
 
     # ---- settings and the Run button
     if inputs is None:
-        st.info("To start a new run, check the inputs on page 1 first. The previous run is shown below.")
+        st.info("To start a new run, choose the inputs in section 1 first. The previous run is shown below.")
         sel = None
     else:
         st.subheader("Settings")
@@ -185,7 +185,7 @@ def render():
             if pl.measures_available():
                 st.success("Stage 1 complete: `data/final_dataset/extracted_measures.shp` holds the neighborhoods "
                            "with one column per measure and buffer.")
-                st.page_link(st.session_state.pages["stage2"], label="Next: Stage 2, the component analysis →")
+                st.caption("Next: the component analysis, in section 3 below.")
             else:
                 st.warning("The run finished but extracted_measures.shp does not match the saved selection; run again.")
         if running and state != "running":

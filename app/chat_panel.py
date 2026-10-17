@@ -1,10 +1,10 @@
-"""The chat panel shown beside every page: history, suggested questions, the input box."""
+"""The chat panel shown beside the page: history, suggested questions, the input box."""
 import time
 import streamlit as st
 
 from chat import load_config, check_provider, stream_reply, system_message, SUGGESTIONS
 
-SETUP_NOTE = """**No model is answering yet.** The app works without it: every step is done in the pages.
+SETUP_NOTE = """**No model is answering yet.** The app works without it: every step is done in the app.
 To turn the assistant on, either install [Ollama](https://ollama.com), run `ollama pull llama3.2`
 once and reload, or put a Gemini or Groq API key in a `.env` file next to `README.md`
 (see `.env.example`)."""
@@ -59,7 +59,7 @@ def render(page):
         if not history:
             st.caption("The assistant sees the inputs, the stage-1 status and every table of the "
                        "component analysis as you go, and can explain or advise on each step. "
-                       "It never changes anything: every choice stays yours, in the pages.")
+                       "It never changes anything: every choice stays yours, in the app.")
         for m in history:
             with st.chat_message(m["role"]):
                 st.markdown(m["content"])

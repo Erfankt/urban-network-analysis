@@ -1,4 +1,4 @@
-"""Page 1: the two input layers (from the data folder or from this computer), the neighborhood identifier
+"""Section 1: the two input layers (from the data folder or from this computer), the neighborhood identifier
 column, the coordinate reference systems, a look at each dataset and a map of both."""
 import html
 import os
@@ -181,7 +181,7 @@ def _neighborhoods_panel(p):
              ("Total area", f"{_fmt(p['total_sqmi'], 1)} sq mi", None),
              ("Median area", f"{_fmt(p['median_acre'])} acres", f"smallest {_fmt(p['min_acre'])}, largest {_fmt(p['max_acre'])} acres"),
              ("Numeric columns", _fmt(len(p["numeric"])),
-              "The columns the dependent variable and the controls are chosen from on the Stage 1 page: "
+              "The columns the dependent variable and the controls are chosen from in Stage 1 below: "
               + (", ".join(p["numeric"]) or "none"))]
     note = (f"Areas up to the 99th percentile ({_fmt(h['upper'])} acres); {_plural(h['clipped'], 'larger polygon')} not drawn."
             if h["clipped"] else None)
@@ -237,7 +237,7 @@ def restore_inputs():
 
 # ---- the page -------------------------------------------------------------------------------------------------
 def render():
-    st.title("1 · Inputs")
+    st.header("1 · Inputs", anchor="inputs")
     st.markdown(
         "The pipeline starts from a **cleaned street centerline layer** and **neighborhood polygons** with a "
         "column that identifies each neighborhood, a crime-count column and numeric control variables. The "
@@ -316,4 +316,3 @@ def render():
                "in the control at the top right; the button at the top left opens the map full screen. "
                "The streets are drawn simplified for speed.")
     components.html(_map_html(streets, nbhd, mtimes, id_col), height=620)
-    st.page_link(st.session_state.pages["stage1"], label="Next: Stage 1, the street-network measures →")
