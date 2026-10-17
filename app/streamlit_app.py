@@ -27,33 +27,44 @@ if "run" not in st.session_state:
     st.session_state.run = {"inputs": None, "stage1": None, "stage2": None, "final": None}
     st.session_state.chat = []
 
-STEPS = [("inputs", "1 · Inputs", inputs), ("stage-1", "2 · Stage 1: network measures", stage1),
-         ("stage-2", "3 · Stage 2: component analysis", stage2),
-         ("final-dataset", "4 · Final dataset", final)]
+import theme                                           # noqa: E402
+
+STEPS = [("inputs", "Inputs", inputs), ("stage-1", "Stage 1: network measures", stage1),
+         ("stage-2", "Stage 2: component analysis", stage2), ("final-dataset", "Final dataset", final)]
+STAGE1_STATE = {"finished": ("done", "Finished"), "running": ("run", "Running…"), "failed": ("fail", "Failed"),
+                "stopped": ("warn", "Stopped, can resume"), "none": ("wait", "Not started")}
 
 
-def current_step():
-    """The step the user is at (the first one not finished), for the assistant's suggestions and context."""
-    if not st.session_state.run.get("inputs"):
-        return "Inputs"
-    if stage1_state() != "finished" or not pl.measures_available():
-        return "Stage 1"
+def step_states():
+    """(anchor, title, state, label) of the four steps, from what exists on disk and in the session."""
+    run = st.session_state.run
+    s1 = pl.stage1_status()["state"]
+    measures = pl.measures_available()
     present, _ = pl.final_outputs()
-    return "Final dataset" if present["csv"] and present["dictionary"] else "Stage 2"
+    built = bool(present["csv"] and present["dictionary"])
+    st1_state, st1_label = STAGE1_STATE[s1]
+    if s1 == "finished" and not measures:
+        st1_state, st1_label = "warn", "Finished, measures do not match"
+    return [
+        ("inputs", "Inputs", *(("done", "Layers ready") if run.get("inputs") else ("wait", "Choose the layers"))),
+        ("stage-1", "Stage 1: network measures", st1_state, st1_label),
+        ("stage-2", "Stage 2: component analysis",
+         *(("done", "Dataset built") if built else ("ready", "Ready to analyze") if measures
+           else ("wait", "Waiting for stage 1"))),
+        ("final-dataset", "Final dataset", *(("done", "Ready to download") if built else ("wait", "Not built yet"))),
+    ]
 
 
-def stage1_state():
-    return pl.stage1_status()["state"]
+def current_step(states):
+    """The first step not finished: the assistant's context and the highlighted step of the sidebar."""
+    return next((a for a, _, state, _ in states if state != "done"), states[-1][0])
 
 
+theme.inject()
 with st.sidebar:
-    st.markdown("**Street Network Configuration and Property Crime** — data pipeline")
-    st.caption("Kefayat & Thill (2025), ISPRS IJGI 14(5):200")
-    st.markdown("\n".join(f"- [{title}](#{anchor})" for anchor, title, _ in STEPS))
-    status = pl.stage1_status()
-    st.caption(f"Stage 1: {stage1.STATE_LABEL[status['state']]}"
-               + (" · measures ready" if pl.measures_available() else ""))
-    st.caption(f"Repository: `{pl.REPO_DIR}`")
+    st.markdown(theme.sidebar_head(), unsafe_allow_html=True)
+    stepper_slot = st.empty()
+    st.markdown(f'<div class="facts">Repository<br><code>{pl.REPO_DIR}</code></div>', unsafe_allow_html=True)
 
 # the chat panel stays in view while the long page scrolls
 st.markdown("<style>[data-testid='stColumn']:has(.st-key-chat-panel) "
@@ -61,12 +72,19 @@ st.markdown("<style>[data-testid='stColumn']:has(.st-key-chat-panel) "
 
 main, side = st.columns([2.4, 1], gap="large")
 with main:
-    st.title("Street network configuration and property crime")
-    st.caption("The data pipeline of Kefayat & Thill (2025), step by step: choose the inputs, measure the street "
-               "networks, reduce the variables, and download the final dataset.")
-    for i, (_, _, view) in enumerate(STEPS):
-        if i:
-            st.divider()
-        view.render()
+    theme.title_bar()
+    heads = []
+    for anchor, _, view in STEPS:
+        with st.container(key=f"sec-{anchor}"):
+            heads.append(st.empty())          # the header is filled in after the section ran, with its final status
+            view.render()
+    theme.footer()
+
+states = step_states()
+current = current_step(states)
+for i, (head, (anchor, title, state, label)) in enumerate(zip(heads, states), start=1):
+    head.markdown(theme.section_head(i, title, anchor, state, label), unsafe_allow_html=True)
+stepper_slot.markdown(theme.stepper(states, current), unsafe_allow_html=True)
+STEP_NAMES = {"inputs": "Inputs", "stage-1": "Stage 1", "stage-2": "Stage 2", "final-dataset": "Final dataset"}
 with side, st.container(key="chat-panel"):
-    chat_panel.render(current_step())
+    chat_panel.render(STEP_NAMES[current])

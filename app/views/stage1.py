@@ -119,7 +119,6 @@ def _progress_panel(status):
 
 
 def render():
-    st.header("2 · Stage 1: street-network measures", anchor="stage-1")
     st.markdown(
         "Builds the street network (intersections and dead ends as nodes), buffers every neighborhood by the "
         "chosen distances, keeps the largest connected component inside each buffer and measures it with the "

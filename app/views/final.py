@@ -7,7 +7,6 @@ import pipeline as pl
 
 
 def render():
-    st.header("4 · Final dataset", anchor="final-dataset")
     present, sel = pl.final_outputs()
     if not present["csv"] or not present["dictionary"]:
         st.info("Not built yet: finish the component analysis in section 3 and build the final dataset at its end.")

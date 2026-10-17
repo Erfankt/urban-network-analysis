@@ -7,3 +7,42 @@ gatherUsageStats = false
 [server]
 # layers uploaded on the Inputs page can be large (MB)
 maxUploadSize = 1000
+
+# ---- look: a clean research-lab palette (one deep-teal accent), light and dark.
+# The theme follows the system setting; "Settings > Theme" in the app's top-right menu switches it.
+[theme]
+baseRadius = "0.6rem"
+buttonRadius = "0.5rem"
+showSidebarBorder = false
+
+[theme.light]
+primaryColor = "#0f766e"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f6f6"
+textColor = "#14292b"
+linkColor = "#0f766e"
+borderColor = "#d6e2e2"
+codeBackgroundColor = "#eef4f4"
+dataframeBorderColor = "#d6e2e2"
+dataframeHeaderBackgroundColor = "#e6efef"
+chartCategoricalColors = ["#0f766e", "#b45309", "#4f46e5", "#be185d", "#475569"]
+
+[theme.light.sidebar]
+backgroundColor = "#eaf2f2"
+secondaryBackgroundColor = "#dde9e9"
+
+[theme.dark]
+primaryColor = "#1fa89a"
+backgroundColor = "#0c1517"
+secondaryBackgroundColor = "#13201f"
+textColor = "#e3eded"
+linkColor = "#4fd1c5"
+borderColor = "#27393a"
+codeBackgroundColor = "#101c1e"
+dataframeBorderColor = "#27393a"
+dataframeHeaderBackgroundColor = "#17282a"
+chartCategoricalColors = ["#4fd1c5", "#f0a24b", "#9aa5ff", "#f08cb8", "#94a3b8"]
+
+[theme.dark.sidebar]
+backgroundColor = "#0a1213"
+secondaryBackgroundColor = "#111d1e"

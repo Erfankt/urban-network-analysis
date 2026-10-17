@@ -167,7 +167,6 @@ def _chat_block_state(key, variables, mtime, method):
 
 
 def render():
-    st.header("3 · Stage 2: component analysis", anchor="stage-2")
     if not pl.measures_available():
         st.info("Stage 1 has not produced `extracted_measures.shp` for the saved selection yet: run stage 1 in section 2 first.")
         return

@@ -330,7 +330,7 @@ def layers_map_html(neighborhoods, edges=None, id_col="id", neighborhood_columns
     m.get_root().html.add_child(folium.Element("<style>.leaflet-container{background:#fff}</style>"))
 
     folium.GeoJson(nb_fc, name=f"Neighborhoods ({len(nb_fc['features'])})", show=True,
-                   style_function=lambda f: {"color": "#2a78d6", "weight": 2, "fillColor": "#2a78d6", "fillOpacity": 0.12},
+                   style_function=lambda f: {"color": "#0e8a7f", "weight": 2, "fillColor": "#0e8a7f", "fillOpacity": 0.14},
                    highlight_function=lambda f: {"weight": 3, "fillOpacity": 0.3},
                    popup=folium.GeoJsonPopup(fields=nb_cols, aliases=nb_cols, labels=True, localize=True,
                                              max_width=360)).add_to(m)
@@ -339,7 +339,7 @@ def layers_map_html(neighborhoods, edges=None, id_col="id", neighborhood_columns
         st_fc, st_cols = _feature_collection(edges, st_cols, simplify_ft=STREET_SIMPLIFY_FT,
                                              max_columns=STREET_POPUP_COLUMNS)
         folium.GeoJson(st_fc, name=f"Streets ({len(st_fc['features'])} segments)", show=True, smooth_factor=1.0,
-                       style_function=lambda f: {"color": "#52514e", "weight": 1.2, "opacity": 0.75},
+                       style_function=lambda f: {"color": "#34445a", "weight": 1.2, "opacity": 0.8},
                        popup=folium.GeoJsonPopup(fields=st_cols, aliases=st_cols, labels=True, localize=True,
                                                  max_width=360) if st_cols else None).add_to(m)
     m.fit_bounds([[b[1], b[0]], [b[3], b[2]]])

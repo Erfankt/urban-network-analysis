@@ -17,8 +17,7 @@ UPLOAD_HELP = ("Select the parts of one shapefile together (.shp, .shx, .dbf, .p
                "or one .gpkg / .geojson. Saving copies the files into the data folder of the repository "
                "(data/streetnetwork/ or data/neighborhoods/), where the pipeline reads them; the layer then "
                "appears in the Data folder list.")
-BAR = "#2a78d6"            # the one hue of the two single-series charts
-INK_2 = "#52514e"
+BAR = "#0e8a7f"            # the one hue of the two single-series charts (the app's teal)
 TILE_CSS = """<style>
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;margin:4px 0 8px}
 .tile .lbl{font-size:.82rem;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -122,10 +121,9 @@ def _hist_chart(h, x_title, y_title):
                        "to": h["end"]})
     return (alt.Chart(df)
             .mark_bar(color=BAR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
-            .encode(x=alt.X("start:Q", title=x_title, axis=alt.Axis(grid=False, format="~s", labelColor=INK_2, titleColor=INK_2)),
+            .encode(x=alt.X("start:Q", title=x_title, axis=alt.Axis(grid=False, format="~s")),
                     x2="end:Q",
-                    y=alt.Y("count:Q", title=None, axis=alt.Axis(tickCount=4, format="~s", gridColor="#e9e9e6",
-                                                                   domain=False, labelColor=INK_2, titleColor=INK_2)),
+                    y=alt.Y("count:Q", title=None, axis=alt.Axis(tickCount=4, format="~s", domain=False)),
                     tooltip=[alt.Tooltip("start:Q", title="from", format=",.1f"),
                              alt.Tooltip("to:Q", title="to", format=",.1f"),
                              alt.Tooltip("count:Q", title=y_title, format=",")])
@@ -237,7 +235,6 @@ def restore_inputs():
 
 # ---- the page -------------------------------------------------------------------------------------------------
 def render():
-    st.header("1 · Inputs", anchor="inputs")
     st.markdown(
         "The pipeline starts from a **cleaned street centerline layer** and **neighborhood polygons** with a "
         "column that identifies each neighborhood, a crime-count column and numeric control variables. The "
