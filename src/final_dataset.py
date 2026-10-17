@@ -24,7 +24,7 @@ def area_in_acres(gdf):
                      "Reproject the neighborhoods layer to a projected CRS in feet or metres.")
 
 
-def assemble_final_dataset(gdf, crime_col, representatives, pca_net, pca_ctrl):
+def assemble_final_dataset(gdf, crime_col, representatives, pca_net, pca_ctrl, id_col="id"):
     """
     Build the final dataset and its data dictionary.
 
@@ -32,9 +32,10 @@ def assemble_final_dataset(gdf, crime_col, representatives, pca_net, pca_ctrl):
     crime_col        : name of the dependent variable (property crime count)
     representatives  : one street-network measure per retained network component
     pca_net, pca_ctrl: the report dicts returned by explore_pca() for the two blocks
+    id_col           : the neighborhood identifier column, kept under its own name
     Returns (final_gdf, dictionary_df).
     """
-    base = gdf[["id", "geometry"]].copy().reset_index(drop=True)
+    base = gdf[[id_col, "geometry"]].copy().reset_index(drop=True)
     centroids = gdf.geometry.centroid
     base["cent_x"] = centroids.x.values
     base["cent_y"] = centroids.y.values
@@ -57,7 +58,7 @@ def assemble_final_dataset(gdf, crime_col, representatives, pca_net, pca_ctrl):
         crs_name = f"EPSG:{epsg}, {gdf.crs.name}" if epsg else (gdf.crs.name or "unnamed CRS")
     rot = pca_net["rotated_loadings"]
     rows = [
-        ("id", "identifier", "neighborhood identifier (unique)"),
+        (id_col, "identifier", "neighborhood identifier (unique)"),
         ("cent_x", "coordinates", f"polygon centroid x in the layer CRS ({crs_name}); e.g. for GWR"),
         ("cent_y", "coordinates", f"polygon centroid y in the layer CRS ({crs_name}); e.g. for GWR"),
         (crime_col, "dependent variable", "property crime count per neighborhood"),

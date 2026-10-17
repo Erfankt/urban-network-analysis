@@ -39,7 +39,7 @@ def _settings(inputs, prev):
     if buffers is None or not controls:
         return None
     return {"streets_path": inputs["streets_path"], "neighborhoods_path": inputs["neighborhoods_path"],
-            "buffer_list_mile": buffers, "crime_col": crime, "ctrl_vars": controls}
+            "id_col": inputs["id_col"], "buffer_list_mile": buffers, "crime_col": crime, "ctrl_vars": controls}
 
 
 def _progress_panel(status):
@@ -47,7 +47,7 @@ def _progress_panel(status):
     state = status["state"]
     sel = run["selection"]
     st.markdown(f"**Run:** {STATE_LABEL[state]} · elapsed {_elapsed(status['elapsed'])} · "
-                f"buffers {', '.join(str(b) for b in sel['buffer_list_mile'])} · "
+                f"buffers {', '.join(str(b) for b in sel['buffer_list_mile'])} · identifier `{pl.id_column(sel)}` · "
                 f"dependent variable `{sel['crime_col']}` · {len(sel['ctrl_vars'])} controls")
     total_done = total_all = 0
     for b, (done, total) in status["progress"].items():
@@ -74,6 +74,11 @@ def render():
     status = pl.stage1_status()
     running = status["state"] == "running"
     prev = (status["run"] or {}).get("selection")
+    if prev is None:                                   # no app run yet: offer the choices of the last terminal run
+        try:
+            prev = pl.load_selection()
+        except Exception:
+            prev = None
 
     if inputs is None and status["state"] == "none":
         st.info("Check the inputs on page 1 first.")

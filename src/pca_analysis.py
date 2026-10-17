@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 import numpy as np, pandas as pd, geopandas as gpd, seaborn as sns, folium
 
 from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS
-from user_inputs import load_selection, update_selection, select_pca_method
+from user_inputs import load_selection, update_selection, select_pca_method, id_column
 from common import explore_pca, select_representatives, FigureSaver, report_missing
 from final_dataset import assemble_final_dataset, write_final_dataset
 
@@ -67,11 +67,12 @@ def section(title):
 section("1. Loading inputs")
 selection = load_selection()                  # inputs and choices recorded by run_analysis.py
 crime_col, ctrl_vars, buffer_list_mile = selection["crime_col"], selection["ctrl_vars"], selection["buffer_list_mile"]
+id_col = id_column(selection)                 # the neighborhood identifier column chosen in stage 1
 gdf = gpd.read_file("../data/final_dataset/extracted_measures.shp")
 
 final_list_net = StreetNetworkProcessor.measure_columns(buffer_list_mile)   # same naming rule as stage 1
 
-missing_cols = [c for c in final_list_net + ctrl_vars if c not in gdf.columns]
+missing_cols = [c for c in [id_col] + final_list_net + ctrl_vars if c not in gdf.columns]
 if missing_cols:
     sys.exit(f"Columns missing from extracted_measures.shp: {missing_cols}\n"
              "Run run_analysis.py first, or check buffer_list_mile and the selected control variables.")
@@ -83,7 +84,7 @@ print(f"Dependent variable: {crime_col}")
 # 2. Interactive map of the neighborhoods with their values (HTML file)
 # --------------------------------------------------------------------------
 section("2. Neighborhood map")
-popup_vars = ["id"] + final_list_net + ctrl_vars
+popup_vars = [id_col] + final_list_net + ctrl_vars
 gdf_vis = gdf.to_crs(4326)
 
 
@@ -95,7 +96,7 @@ features = []
 for _, r in gdf_vis.iterrows():
     popup_html = "<br>".join(f"{v}: {fmt(r.get(v, 'NA'))}" for v in popup_vars)
     features.append({"type": "Feature", "geometry": r.geometry.__geo_interface__,
-                     "properties": {"id": r["id"], "popup": popup_html}})
+                     "properties": {"id": r[id_col], "popup": popup_html}})
 
 m = folium.Map([gdf_vis.geometry.centroid.y.mean(), gdf_vis.geometry.centroid.x.mean()],
                zoom_start=11, tiles="OpenStreetMap")
@@ -113,7 +114,7 @@ section("3. Descriptive statistics")
 print(gdf[final_list_net + ctrl_vars].describe().T.round(3).to_string())
 
 section("4. Missing values")
-if not report_missing(gdf, final_list_net, ctrl_vars).empty:
+if not report_missing(gdf, final_list_net, ctrl_vars, id_col=id_col).empty:
     sys.exit("\nStopped before the component analysis: handle the missing values listed above first.")
 
 # --------------------------------------------------------------------------
@@ -167,7 +168,7 @@ update_selection(pca_method=pca_method, pca_rotation=pca_rotation,
 # 10. Assemble and write the final modeling dataset (the repository's end product)
 # --------------------------------------------------------------------------
 section("10. Final dataset")
-final_gdf, dictionary = assemble_final_dataset(gdf, crime_col, network_representatives, pca_net, pca_ctrl)
+final_gdf, dictionary = assemble_final_dataset(gdf, crime_col, network_representatives, pca_net, pca_ctrl, id_col=id_col)
 shp, csv, dic = write_final_dataset(final_gdf, dictionary)
 print(f"{len(final_gdf)} rows x {final_gdf.shape[1] - 1} columns written to:\n  {shp}\n  {csv}\n  {dic}")
 print(dictionary.to_string(index=False))

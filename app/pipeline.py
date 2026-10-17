@@ -33,9 +33,11 @@ import matplotlib.pyplot as plt
 import numpy as np, pandas as pd, geopandas as gpd, seaborn as sns, folium, psutil
 
 from run_analysis import DEFAULTS
-from user_inputs import (inspect_inputs, parse_buffers, numeric_columns, save_selection, load_selection,
-                         update_selection, selection_summary, PCA_METHODS, SELECTION_PATH)
-from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS
+from user_inputs import (check_layers, identifier_candidates, default_id_column, id_column, parse_buffers,
+                         numeric_columns, save_selection, load_selection, update_selection, selection_summary,
+                         PCA_METHODS, SELECTION_PATH)
+from street_network_processor import (StreetNetworkProcessor, NETWORK_METRICS, align_neighborhoods_crs, crs_label,
+                                      SAME_CRS_TOLERANCE)
 from common import (missing_summary, overview_stats, rules_of_thumb_text, correlation_figure, scree_figure,
                     fit_solution, unrotated_loadings_figure, rotated_loadings_figure, solution_summary_text,
                     component_candidates, candidate_text, FigureSaver)
@@ -53,6 +55,7 @@ STAGE1_FAILED = "An error occurred during processing"
 LAYER_DIRS = {"streets": "streetnetwork", "neighborhoods": "neighborhoods"}
 LAYER_SUFFIXES = (".shp", ".gpkg", ".geojson")
 SHAPEFILE_PARTS = (".shp", ".shx", ".dbf", ".prj", ".cpg", ".sbn", ".sbx", ".qix")
+FT_PER_MILE, SQFT_PER_ACRE, SQFT_PER_SQMILE = 5280.0, 43560.0, 5280.0 ** 2
 
 
 def discover_shapefiles():
@@ -134,42 +137,221 @@ def save_uploaded_layer(kind, uploads):
     return f"../data/{LAYER_DIRS[kind]}/{main}", f"Saved {main} ({len(keep)} file{'s' if len(keep) > 1 else ''}) in data/{LAYER_DIRS[kind]}/.{note}"
 
 
-def load_inputs(streets_path, neighborhoods_path):
+def read_layers(streets_path, neighborhoods_path):
+    """The two layers as read from disk, nothing checked yet. Raises when a file cannot be read."""
+    for p in (streets_path, neighborhoods_path):
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"{p} does not exist")
+    return {"streets_path": str(streets_path), "neighborhoods_path": str(neighborhoods_path),
+            "edges": gpd.read_file(streets_path), "neighborhoods": gpd.read_file(neighborhoods_path)}
+
+
+def id_candidates(neighborhoods):
+    return identifier_candidates(neighborhoods)
+
+
+def crs_relation(edges, neighborhoods):
     """
-    Load and check the two layers (user_inputs.inspect_inputs) and add what the pages need:
-    counts, the numeric columns a variable can be chosen from, and their summary statistics.
-    Raises when a file cannot be read. When `problems` is not empty, the rest is unset.
+    How the two CRS compare: 'same', 'equivalent' (the same system written differently: no coordinate
+    moves by more than SAME_CRS_TOLERANCE ft), 'different', or 'unknown' (a layer without a CRS).
     """
-    info = inspect_inputs(str(streets_path), str(neighborhoods_path))
-    info["streets_path"], info["neighborhoods_path"] = str(streets_path), str(neighborhoods_path)
+    if edges.crs is None or neighborhoods.crs is None:
+        return "unknown"
+    if edges.crs == neighborhoods.crs:
+        return "same"
+    moved = neighborhoods.to_crs(edges.crs)
+    shift = float(np.nanmax(np.abs(moved.bounds.to_numpy() - neighborhoods.bounds.to_numpy())))
+    return "equivalent" if shift < SAME_CRS_TOLERANCE else "different"
+
+
+def check_inputs(layers, id_col):
+    """
+    Validate the two layers for the chosen identifier column (user_inputs.check_layers) and put the
+    neighborhoods in the streets CRS (user_inputs.align_neighborhoods_crs, as the pipeline does).
+    Returns a dict: problems (empty = fine; then the rest is set), crs {relation, streets, neighborhoods},
+    neighborhoods (aligned), n_segments, n_neighborhoods, columns (the numeric columns a variable can be
+    chosen from), id_col, summary, note.
+    """
+    edges, nb = layers["edges"], layers["neighborhoods"]
+    info = {"streets_path": layers["streets_path"], "neighborhoods_path": layers["neighborhoods_path"],
+            "id_col": id_col, "problems": check_layers(edges, nb, id_col), "note": None, "summary": ""}
     if info["problems"]:
         return info
-    nb = info["neighborhoods"]
-    info["n_segments"] = int(len(info["edges"]))
-    info["n_neighborhoods"] = int(len(nb))
-    info["columns"] = numeric_columns(nb)
-    info["column_stats"] = nb[info["columns"]].describe().T if info["columns"] else pd.DataFrame()
+    relation = crs_relation(edges, nb)
+    aligned, note = align_neighborhoods_crs(edges, nb)
+    info.update(neighborhoods=aligned, n_segments=int(len(edges)), n_neighborhoods=int(len(nb)),
+                columns=numeric_columns(nb, id_col), note=note if relation == "different" else None,
+                crs={"relation": relation, "streets": crs_label(edges.crs), "neighborhoods": crs_label(nb.crs)},
+                summary=(f"streets: {len(edges)} segments | neighborhoods: {len(nb)} polygons "
+                         f"| CRS: {crs_label(edges.crs)}"))
     return info
 
 
-def neighborhoods_map_html(neighborhoods, popup_vars=("id",)):
-    """An interactive map of the neighborhood polygons (folium), as HTML; same style as stage 2's map."""
-    gdf_vis = neighborhoods.to_crs(4326)
+def write_matched_neighborhoods(layers):
+    """
+    Write a copy of the neighborhoods layer reprojected to the streets CRS, next to the original
+    (data/neighborhoods/<name>_epsg<code>.shp, or .gpkg for a GeoPackage), and return its path relative
+    to src/. The pipeline would reproject on the fly anyway; the copy makes the match explicit on disk.
+    """
+    edges, nb = layers["edges"], layers["neighborhoods"]
+    src = Path(layers["neighborhoods_path"])
+    code = edges.crs.to_epsg()
+    tag = f"epsg{code}" if code else "reprojected"
+    ext = ".gpkg" if src.suffix.lower() == ".gpkg" else ".shp"
+    folder = DATA_DIR / LAYER_DIRS["neighborhoods"]
+    folder.mkdir(parents=True, exist_ok=True)
+    out = folder / f"{src.stem}_{tag}{ext}"
+    nb.to_crs(edges.crs).to_file(out)
+    return f"../data/{LAYER_DIRS['neighborhoods']}/{out.name}"
 
-    def fmt(v):
-        return f"{v:.2f}" if isinstance(v, (float, int)) and pd.notna(v) else v
 
+def _histogram(values, bins=30, clip_quantile=0.99):
+    """Counts of `values` in `bins` equal bins up to the clip quantile; returns a dict for a bar chart."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return {"start": [], "end": [], "count": [], "clipped": 0, "upper": 0.0}
+    upper = float(np.quantile(v, clip_quantile)) if v.size > 20 else float(v.max())
+    upper = upper if upper > 0 else float(v.max() or 1.0)
+    inside = v[v <= upper]
+    counts, edges_ = np.histogram(inside, bins=bins, range=(0.0, upper))
+    return {"start": edges_[:-1].tolist(), "end": edges_[1:].tolist(), "count": counts.astype(int).tolist(),
+            "clipped": int(v.size - inside.size), "upper": upper}
+
+
+def layer_profile(layers, info):
+    """
+    The numbers behind the two dataset panels of the Inputs page: counts, lengths or areas (in the
+    streets CRS, US feet), geometry notes, columns, CRS, and a binned histogram each.
+    """
+    edges, nb = layers["edges"], info["neighborhoods"]
+    length_ft = edges.geometry.length.to_numpy(dtype=float)
+    area_sqft = nb.geometry.area.to_numpy(dtype=float)
+    attr_cols = [c for c in edges.columns if c != "geometry"]
+    numeric = info["columns"]
+    other = [c for c in nb.columns if c not in numeric and c not in (info["id_col"], "geometry")]
+    missing_cells = int(nb[numeric].isna().sum().sum()) if numeric else 0
+    return {
+        "streets": {
+            "n": int(len(edges)), "total_mi": float(length_ft.sum() / FT_PER_MILE),
+            "median_ft": float(np.nanmedian(length_ft)), "mean_ft": float(np.nanmean(length_ft)),
+            "p90_ft": float(np.nanquantile(length_ft, 0.9)), "max_ft": float(np.nanmax(length_ft)),
+            "multipart": int((edges.geom_type == "MultiLineString").sum()),
+            "empty": int(edges.geometry.is_empty.sum()),
+            "columns": attr_cols, "crs": crs_label(edges.crs),
+            "hist": _histogram(length_ft),
+        },
+        "neighborhoods": {
+            "n": int(len(nb)), "total_sqmi": float(area_sqft.sum() / SQFT_PER_SQMILE),
+            "median_acre": float(np.nanmedian(area_sqft) / SQFT_PER_ACRE),
+            "min_acre": float(np.nanmin(area_sqft) / SQFT_PER_ACRE), "max_acre": float(np.nanmax(area_sqft) / SQFT_PER_ACRE),
+            "multipart": int((nb.geom_type == "MultiPolygon").sum()),
+            "id_col": info["id_col"], "numeric": numeric, "other": other, "missing_cells": missing_cells,
+            "crs": crs_label(layers["neighborhoods"].crs), "crs_relation": info["crs"]["relation"],
+            "hist": _histogram(area_sqft / SQFT_PER_ACRE),
+        },
+    }
+
+
+# ---- the map -----------------------------------------------------------------------------------------------
+BASEMAPS = [   # (name, tile URL, attribution); the first is shown at first, the others are offered in the control
+    ("OpenStreetMap", "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+     "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors"),
+    ("Light gray (Esri)",
+     "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+     "Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ"),
+    ("Imagery (Esri)",
+     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+     "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"),
+    ("Topographic (OpenTopoMap)", "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+     "Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; <a href='https://opentopomap.org'>OpenTopoMap</a> (CC-BY-SA)"),
+]
+STREET_SIMPLIFY_FT = 10.0          # vertices closer than this to the line are dropped before drawing (display only)
+STREET_POPUP_COLUMNS = 8           # attribute columns listed for a clicked street (the layer has tens of thousands)
+
+
+def _json_value(v):
+    """A value as the popup should show it (JSON-safe)."""
+    if v is None or (isinstance(v, float) and not np.isfinite(v)):
+        return None
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (float, np.floating)):
+        return round(float(v), 3)
+    if isinstance(v, (int, bool)):
+        return v
+    return str(v)
+
+
+def _feature_collection(gdf, columns, simplify_ft=None, precision=5, max_columns=None):
+    """A GeoJSON FeatureCollection (dict) in WGS 84 with the chosen columns (at most max_columns) as properties."""
+    geom = gdf.geometry.simplify(simplify_ft, preserve_topology=False) if simplify_ft else gdf.geometry
+    g = gpd.GeoSeries(geom, crs=gdf.crs).to_crs(4326)
+    cols = [c for c in columns if c in gdf.columns][:max_columns]
+    values = {c: gdf[c].tolist() for c in cols}
     features = []
-    for _, r in gdf_vis.iterrows():
-        popup_html = "<br>".join(f"{v}: {fmt(r.get(v, 'NA'))}" for v in popup_vars)
-        features.append({"type": "Feature", "geometry": r.geometry.__geo_interface__,
-                         "properties": {"id": r["id"], "popup": popup_html}})
-    m = folium.Map([gdf_vis.geometry.centroid.y.mean(), gdf_vis.geometry.centroid.x.mean()],
-                   zoom_start=11, tiles="OpenStreetMap")
-    folium.GeoJson({"type": "FeatureCollection", "features": features},
-                   tooltip=folium.GeoJsonTooltip(fields=["id"], aliases=["ID:"]),
-                   popup=folium.GeoJsonPopup(fields=["popup"], labels=False, max_width=350)).add_to(m)
+    for i, shape in enumerate(g):
+        if shape is None or shape.is_empty:
+            continue
+        features.append({"type": "Feature", "geometry": _round_geometry(shape.__geo_interface__, precision),
+                         "properties": {c: _json_value(values[c][i]) for c in cols}})
+    return {"type": "FeatureCollection", "features": features}, cols
+
+
+def _round_geometry(geometry, precision):
+    def rnd(coords):
+        if isinstance(coords[0], (int, float)):
+            return [round(coords[0], precision), round(coords[1], precision)]
+        return [rnd(c) for c in coords]
+    return {"type": geometry["type"], "coordinates": rnd(geometry["coordinates"])}
+
+
+def layers_map_html(neighborhoods, edges=None, id_col="id", neighborhood_columns=None, height_note=None):
+    """
+    An interactive map (folium): the neighborhoods and, when given, the streets (drawn above them, so a
+    click on a street reaches it) as two layers that can be switched on and off, a choice of basemaps (OpenStreetMap first), a fullscreen button, and the
+    attributes of a feature shown when it is clicked. Returns the HTML.
+    neighborhood_columns limits the attributes listed for a neighborhood (default: all, up to a dozen).
+    """
+    from folium.plugins import Fullscreen
+
+    nb_cols = list(neighborhood_columns) if neighborhood_columns is not None else \
+        [id_col] + [c for c in neighborhoods.columns if c not in (id_col, "geometry")]
+    nb_fc, nb_cols = _feature_collection(neighborhoods, nb_cols)
+    b = gpd.GeoSeries(neighborhoods.geometry, crs=neighborhoods.crs).to_crs(4326).total_bounds
+    m = folium.Map(location=[(b[1] + b[3]) / 2, (b[0] + b[2]) / 2], zoom_start=11, tiles=None,
+                   prefer_canvas=True, control_scale=True)
+    for i, (name, url, attr) in enumerate(BASEMAPS):
+        folium.TileLayer(tiles=url, name=name, attr=attr, show=(i == 0), max_zoom=19, control=True).add_to(m)
+
+    folium.GeoJson(nb_fc, name=f"Neighborhoods ({len(nb_fc['features'])})", show=True,
+                   style_function=lambda f: {"color": "#2a78d6", "weight": 2, "fillColor": "#2a78d6", "fillOpacity": 0.12},
+                   highlight_function=lambda f: {"weight": 3, "fillOpacity": 0.3},
+                   popup=folium.GeoJsonPopup(fields=nb_cols, aliases=nb_cols, labels=True, localize=True,
+                                             max_width=360)).add_to(m)
+    if edges is not None:
+        st_cols = [c for c in edges.columns if c != "geometry"]
+        st_fc, st_cols = _feature_collection(edges, st_cols, simplify_ft=STREET_SIMPLIFY_FT,
+                                             max_columns=STREET_POPUP_COLUMNS)
+        folium.GeoJson(st_fc, name=f"Streets ({len(st_fc['features'])} segments)", show=True, smooth_factor=1.0,
+                       style_function=lambda f: {"color": "#52514e", "weight": 1.2, "opacity": 0.75},
+                       popup=folium.GeoJsonPopup(fields=st_cols, aliases=st_cols, labels=True, localize=True,
+                                                 max_width=360) if st_cols else None).add_to(m)
+    m.fit_bounds([[b[1], b[0]], [b[3], b[2]]])
+    Fullscreen(position="topleft", title="Full screen", title_cancel="Exit full screen").add_to(m)
+    folium.LayerControl(collapsed=False, position="topright").add_to(m)
+    # the popup table: a compact, readable layout
+    m.get_root().header.add_child(folium.Element(
+        "<style>.leaflet-popup-content table{border-collapse:collapse;font:12px/1.35 system-ui,sans-serif}"
+        ".leaflet-popup-content th{text-align:left;padding:1px 10px 1px 0;color:#52514e;font-weight:600}"
+        ".leaflet-popup-content td{padding:1px 0}"
+        ".leaflet-control-layers{font:12px system-ui,sans-serif}</style>"))
     return m.get_root().render()
+
+
+def neighborhoods_map_html(neighborhoods, popup_vars=("id",), id_col="id"):
+    """The map written with the final dataset: the neighborhoods with the selected variables on click."""
+    return layers_map_html(neighborhoods, edges=None, id_col=id_col, neighborhood_columns=list(popup_vars))
 
 
 def buffer_codes(buffers):
@@ -183,7 +365,7 @@ def buffer_codes(buffers):
 def stage1_command(sel, recompute=False):
     """The run_analysis.py command line that answers every prompt up front."""
     cmd = [sys.executable, "run_analysis.py",
-           "--streets", sel["streets_path"], "--neighborhoods", sel["neighborhoods_path"],
+           "--streets", sel["streets_path"], "--neighborhoods", sel["neighborhoods_path"], "--id-col", id_column(sel),
            "--buffers", ",".join(str(b) for b in sel["buffer_list_mile"]),
            "--crime", sel["crime_col"], "--controls", ",".join(sel["ctrl_vars"])]
     if recompute:
@@ -337,7 +519,8 @@ def measures_available():
         cols = set(gpd.read_file(MEASURES_PATH, rows=1).columns)
     except Exception:
         return False
-    needed = set(StreetNetworkProcessor.measure_columns(sel["buffer_list_mile"])) | set(sel["ctrl_vars"]) | {sel["crime_col"]}
+    needed = (set(StreetNetworkProcessor.measure_columns(sel["buffer_list_mile"])) | set(sel["ctrl_vars"])
+              | {sel["crime_col"], id_column(sel)})
     return needed <= cols
 
 
@@ -348,9 +531,10 @@ def measures_available():
 def load_measures():
     """extracted_measures.shp with the saved selection. Returns (gdf, selection, network_columns)."""
     sel = load_selection()
+    sel["id_col"] = id_column(sel)
     gdf = gpd.read_file(MEASURES_PATH)
     net = StreetNetworkProcessor.measure_columns(sel["buffer_list_mile"])
-    missing_cols = [c for c in net + sel["ctrl_vars"] + [sel["crime_col"]] if c not in gdf.columns]
+    missing_cols = [c for c in net + sel["ctrl_vars"] + [sel["crime_col"], sel["id_col"]] if c not in gdf.columns]
     if missing_cols:
         raise ValueError(f"columns missing from extracted_measures.shp: {missing_cols}; run stage 1 again")
     return gdf, sel, net
@@ -360,8 +544,8 @@ def measures_mtime():
     return MEASURES_PATH.stat().st_mtime if MEASURES_PATH.exists() else 0
 
 
-def check_missing(gdf, net, ctrl_vars):
-    return missing_summary(gdf, net, ctrl_vars)
+def check_missing(gdf, net, ctrl_vars, id_col="id"):
+    return missing_summary(gdf, net, ctrl_vars, id_col)
 
 
 def block_overview(gdf, variables):
@@ -429,7 +613,9 @@ def build_final_dataset(gdf, sel, method, rotation, net_report, ctrl_report, rep
                      network_representatives=list(representatives))
 
     tick(0.15, "assembling the final dataset")
-    final_gdf, dictionary = assemble_final_dataset(gdf, sel["crime_col"], list(representatives), net_report, ctrl_report)
+    id_col = id_column(sel)
+    final_gdf, dictionary = assemble_final_dataset(gdf, sel["crime_col"], list(representatives), net_report, ctrl_report,
+                                                   id_col=id_col)
     shp, csv, dic = write_final_dataset(final_gdf, dictionary)
 
     tick(0.35, "saving the component-analysis figures")
@@ -448,9 +634,9 @@ def build_final_dataset(gdf, sel, method, rotation, net_report, ctrl_report, rep
             plt.close("all")
 
     tick(0.6, "saving the neighborhood map")
-    popup_vars = ["id"] + net_vars + ctrl_vars
+    popup_vars = [id_col] + net_vars + ctrl_vars
     with open(OUT_DIR / "neighborhood_map.html", "w", encoding="utf-8") as f:
-        f.write(neighborhoods_map_html(gdf, popup_vars))
+        f.write(neighborhoods_map_html(gdf, popup_vars, id_col=id_col))
 
     if distribution_plots:
         cols = list(gdf[net_vars + ctrl_vars].select_dtypes(include="number").columns)

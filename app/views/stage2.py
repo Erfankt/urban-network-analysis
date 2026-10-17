@@ -179,11 +179,11 @@ def render():
                 f"dependent variable `{sel['crime_col']}`")
 
     # ---- missing values stop everything, as in the terminal
-    m = pl.check_missing(gdf, net, ctrl)
+    m = pl.check_missing(gdf, net, ctrl, sel["id_col"])
     if not m["counts"].empty:
         st.error("The component analysis cannot run on missing values (the correlation matrix is undefined).")
         st.dataframe(m["counts"].rename("missing values").to_frame(), use_container_width=False)
-        st.markdown("**Neighborhoods affected:** " + "; ".join(f"id {i}: {', '.join(v)}" for i, v in m["rows"]))
+        st.markdown("**Neighborhoods affected:** " + "; ".join(f"{sel['id_col']} {i}: {', '.join(v)}" for i, v in m["rows"]))
         for line in m["advice"]:
             st.markdown(f"- {line}")
         return

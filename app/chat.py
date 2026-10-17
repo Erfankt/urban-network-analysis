@@ -165,8 +165,9 @@ numbers you rely on."""
 
 METHOD_NOTES = """METHOD NOTES
 Inputs: a cleaned street centerline layer (projected CRS in US feet; it defines the working CRS) and \
-neighborhood polygons with a unique `id`, a crime-count column and numeric control variables. The \
-neighborhoods are reprojected to the streets CRS when they differ.
+neighborhood polygons with an identifier column (unique, chosen on the Inputs page; `id` in the paper's \
+data), a crime-count column and numeric control variables. The neighborhoods are reprojected to the \
+streets CRS when they differ.
 Stage 1 builds the street network (nodes at segment endpoints; degree-2 nodes removed so nodes are \
 intersections and dead ends), buffers each neighborhood by the chosen distances (paper: 0.1, 0.25, \
 0.5, 0.75 and 1.0 miles), keeps the largest connected component of the segments inside each buffer, \
@@ -189,7 +190,7 @@ the models after a log(x + 1) transform. The socio-spatial controls get the same
 component scores are the controls.
 The paper (Charlotte, NC, 371 neighborhoods, 16 controls): 4 network components (74.1% of variance \
 with minres) represented by int_den075, cl_cof075, shtpth075 and bt_cnt05; 9 control components. \
-Final dataset columns: id, cent_x/cent_y (centroid, for GWR), the crime count, area_acre (log as the \
+Final dataset columns: the identifier, cent_x/cent_y (centroid, for GWR), the crime count, area_acre (log as the \
 offset of the count models), the representative measures, PC*_net scores (robustness check) and \
 PC*_ctrl scores (controls). The models themselves (NB GLM, SAR/CAR-NB with INLA, GWR-NB) are fitted \
 outside the app."""
@@ -204,8 +205,9 @@ def describe_run(run, page):
     out = [f"CURRENT RUN (the user is on the page: {page})"]
     inp = run.get("inputs")
     if inp:
-        out.append(f"Inputs checked: {inp.get('summary', '')}. Numeric columns available: "
-                   f"{', '.join(inp.get('columns', [])) or 'none'}." + (f" Note: {inp['note']}." if inp.get("note") else ""))
+        out.append(f"Inputs checked: {inp.get('summary', '')}. Identifier column: {inp.get('id_col', 'id')}. "
+                   f"Numeric columns available: {', '.join(inp.get('columns', [])) or 'none'}."
+                   + (f" Note: {inp['note']}." if inp.get("note") else ""))
     else:
         out.append("Inputs: not checked yet (Inputs page).")
     s1 = run.get("stage1")

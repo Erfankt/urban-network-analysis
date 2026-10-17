@@ -68,12 +68,12 @@ To see whether an existing environment is already complete, activate it and run 
 
 ## Input data
 
-The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and a unique `id` column.
+The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and an identifier column with a distinct, non-missing value in every polygon. That column is chosen at setup (`id` by default, or `--id-col`); it keys the checkpoints and is kept under its own name in every output table.
 
 | File | Content | Requirements |
 |---|---|---|
 | `data/streetnetwork/streets.shp` | Street centerlines (LineString or MultiLineString) | Already cleaned: the pipeline assumes non-functional segments (e.g. retired or non-service roads) have been removed. |
-| `data/neighborhoods/neighborhoods.shp` | Neighborhood polygons | A unique identifier column named `id`; a numeric crime-count column; numeric columns for the control variables. Study-area decisions (e.g. the paper excluded the airport neighborhood) are made before running the pipeline. |
+| `data/neighborhoods/neighborhoods.shp` | Neighborhood polygons | A unique identifier column (`id` by default; any column can be chosen); a numeric crime-count column; numeric columns for the control variables. Study-area decisions (e.g. the paper excluded the airport neighborhood) are made before running the pipeline. |
 
 The paper's units of analysis are the 371 Neighborhood Profile Areas (NPAs) of the City of Charlotte, NC (see *Reproducing the Charlotte study* below).
 
@@ -84,13 +84,13 @@ cd src
 python run_analysis.py
 ```
 
-The script asks for everything it needs, showing a default in brackets that Enter accepts: the two input shapefiles (validated as described above), the buffer distances in miles (comma-separated; the paper's five are the default; the distances must be positive and distinct and must yield column names within the 10-character shapefile limit, so at most two decimals), then, from the numeric columns of the neighborhoods layer, the dependent variable (crime count) and the control variables, by number or name. The defaults live in `DEFAULTS` at the top of `run_analysis.py`.
+The script asks for everything it needs, showing a default in brackets that Enter accepts: the two input shapefiles (validated as described above), the neighborhood identifier column (`id` when the layer has one that is unique and complete, otherwise the first column that is), the buffer distances in miles (comma-separated; the paper's five are the default; the distances must be positive and distinct and must yield column names within the 10-character shapefile limit, so at most two decimals), then, from the numeric columns of the neighborhoods layer, the dependent variable (crime count) and the control variables, by number or name. The defaults live in `DEFAULTS` at the top of `run_analysis.py`.
 
 The same answers can be given up front, for scripted or repeated runs; whatever is missing is still prompted for:
 
 ```bash
 python run_analysis.py --streets ../data/streetnetwork/streets.shp --neighborhoods ../data/neighborhoods/neighborhoods.shp \
-                       --buffers 0.1,0.25,0.5,0.75,1.0 --crime propcrimct --controls bachdg,med_age,emp
+                       --id-col id --buffers 0.1,0.25,0.5,0.75,1.0 --crime propcrimct --controls bachdg,med_age,emp
 python run_analysis.py --reuse        # rerun with the previously saved answers, no questions
 python run_analysis.py --recompute    # ignore the checkpoints (see below) and measure every buffer again
 ```
@@ -143,6 +143,7 @@ All choices are appended to `user_selection.json`, which after both stages reads
 {
   "streets_path": "../data/streetnetwork/streets.shp",
   "neighborhoods_path": "../data/neighborhoods/neighborhoods.shp",
+  "id_col": "id",
   "buffer_list_mile": [0.1, 0.25, 0.5, 0.75, 1.0],
   "crime_col": "propcrimct",
   "ctrl_vars": ["bachdg", "med_age", "..."],
@@ -160,7 +161,7 @@ All choices are appended to `user_selection.json`, which after both stages reads
 
 | Column(s) | Role | Use in the models |
 |---|---|---|
-| `id` | identifier | |
+| identifier column (name as selected, `id` in the paper's data) | identifier | |
 | `cent_x`, `cent_y` | polygon centroid in the layer CRS | coordinates for GWR |
 | crime column (name as selected) | dependent variable | property crime count |
 | `area_acre` | exposure | `log(area_acre)` as offset in the count models |
@@ -180,7 +181,7 @@ streamlit run app/streamlit_app.py
 
 The app opens at `http://localhost:8501` and runs entirely on your computer; nothing is uploaded anywhere. Its four pages follow the pipeline:
 
-1. **Inputs**: pick the two layers (the ones found under `data/` are listed; any path can be typed, or a layer can be uploaded from your computer, as a shapefile's parts, a `.zip`, a `.gpkg` or a `.geojson`, and is copied into `data/`), check them with the same validation and CRS notes as the terminal, see the numeric columns and a map of the neighborhoods.
+1. **Inputs**: each layer comes either from the data folder of the repository (`data/streetnetwork/`, `data/neighborhoods/`; every `.shp`, `.gpkg` and `.geojson` there is listed) or from your computer (a shapefile's parts, a `.zip`, a `.gpkg` or a `.geojson`, copied into that folder and then listed like any other). The layers load as soon as they are picked and are validated as in the terminal; the neighborhood identifier column is chosen here. When the two layers use different coordinate reference systems the page says so and offers to reproject the neighborhoods into the streets' system (a copy is saved beside the original; without it the run reprojects on the fly). A panel per dataset gives the counts, lengths or areas, CRS and columns with a histogram, and a map shows both layers, each switchable, with the attributes of a clicked feature, a choice of basemaps (OpenStreetMap by default) and a full-screen button.
 2. **Stage 1**: buffer distances, dependent variable and controls, then *Run*. The run is `run_analysis.py` started in the background with all answers given, so it leaves exactly the files a terminal run leaves; the page shows one progress bar per buffer, read from the checkpoint CSVs, and the log. *Stop* ends the process and *Resume* continues it from the checkpoints; a browser refresh does not lose the run.
 3. **Stage 2**: the extraction method, then for each block the overview (correlation heatmap, scree plot, eigenvalue table, rules of thumb), any candidate solution on request (rotated and unrotated loadings, variance explained, communalities, salient and cross-loading variables), the number to retain, and, for the street-network block, one dropdown per component for the representative measure, with its loading and cross-loading. A tab shows the distribution figure of any variable, and the last tab builds the final dataset.
 4. **Final dataset**: the dictionary, a preview of the table, downloads (CSV, dictionary, zipped shapefile, the choices as JSON) and the saved figures.
