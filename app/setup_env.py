@@ -10,6 +10,7 @@ This module imports only the standard library, `packaging` (a dependency of Stre
 so it works when the heavy packages (geopandas and the rest) are not installed yet, which is exactly
 when it is needed. The app imports the rest only after this check passes.
 """
+import html
 import importlib
 import importlib.metadata as md
 import os
@@ -162,11 +163,39 @@ def summary_line(env):
     return f"{env['python']} · {n} packages in place · running in {where}"
 
 
+TIPS = {"scikit-learn": "<b>Why <code>scikit-learn &lt; 1.6</code>?</b><br><code>factor_analyzer</code> 0.5.x fails with newer "
+                        "scikit-learn releases (an error such as <code>check_array() got an unexpected keyword argument "
+                        "'force_all_finite'</code>), so <code>requirements.txt</code> pins it."}
+
+TABLE_CSS = """<style>
+.pk { width: 100%; border-collapse: collapse; font-size: .88rem; }
+.pk th { text-align: left; font-weight: 600; padding: .35rem .6rem; border-bottom: 1px solid rgba(127,127,127,.35); opacity: .75; }
+.pk td { padding: .32rem .6rem; border-bottom: 1px solid rgba(127,127,127,.15); }
+.pk .bad { color: #d9830b; font-weight: 600; }
+.pk .ok { color: #0e8a7f; }
+.tipword { position: relative; display: inline-block; cursor: help; border-bottom: 1px dotted currentColor; }
+.tipword .tipbox { display: none; position: absolute; left: 0; bottom: 130%; z-index: 50; width: 22rem; max-width: 70vw;
+                   padding: .7rem .85rem; border-radius: 10px; font-size: .82rem; line-height: 1.45; font-weight: 400;
+                   background: #1f2933; color: #f3f6f8; box-shadow: 0 8px 24px rgba(0,0,0,.3); text-align: left; }
+.tipword .tipbox code { background: rgba(255,255,255,.14); color: inherit; padding: 0 .25rem; border-radius: 4px; }
+.tipword:hover .tipbox, .tipword:focus .tipbox { display: block; }
+</style>"""
+
+
 def _table(rows):
-    import pandas as pd
-    return pd.DataFrame([{"package": r["name"], "required": r["spec"] or "any", "installed": r["installed"] or "—",
-                          "status": r["status"] + (" (optional)" if r["optional"] and r["status"] != "ok" else ""),
-                          "used for": r["group"]} for r in rows])
+    """The packages as an HTML table; a package with an explanation (TIPS) shows it in a pop-up on hover."""
+    body = []
+    for r in rows:
+        name = html.escape(r["name"])
+        if r["name"] in TIPS:
+            name = f'<span class="tipword" tabindex="0">{name}<span class="tipbox">{TIPS[r["name"]]}</span></span>'
+        status = r["status"] + (" (optional)" if r["optional"] and r["status"] != "ok" else "")
+        body.append(f"<tr><td>{name}</td><td>{html.escape(r['spec'] or 'any')}</td>"
+                    f"<td>{html.escape(r['installed'] or '—')}</td>"
+                    f"<td class=\"{'ok' if r['status'] == 'ok' else 'bad'}\">{html.escape(status)}</td>"
+                    f"<td>{html.escape(r['group'])}</td></tr>")
+    return (TABLE_CSS + '<table class="pk"><tr><th>package</th><th>required</th><th>installed</th><th>status</th>'
+            '<th>used for</th></tr>' + "".join(body) + "</table>")
 
 
 def _run_steps(steps, label):
@@ -209,7 +238,7 @@ def render(env):
             if not env["in_venv"]:
                 st.caption("The app is not running inside the repository's `.venv`; that is fine as long as the "
                            "packages are in place, though a virtual environment keeps them apart from your other projects.")
-            st.dataframe(_table(env["rows"]), use_container_width=True, hide_index=True)
+            st.markdown(_table(env["rows"]), unsafe_allow_html=True)
         return True
 
     st.markdown("Before the pipeline can run, the Python environment needs a few packages. "
@@ -219,11 +248,7 @@ def render(env):
     c1.markdown(f"**1 · Virtual environment**  \n{'✅ `.venv` exists' if env['venv_exists'] else '⬜ not created yet'}")
     c2.markdown(f"**2 · App runs in it**  \n{'✅ yes' if env['in_venv'] else '⬜ no (' + env['python'].split(' (')[0] + ' outside .venv)'}")
     c3.markdown(f"**3 · Packages**  \n⬜ {len(missing)} to install or fix")
-    st.dataframe(_table(missing), use_container_width=True, hide_index=True,
-                 height=min(60 + 35 * len(missing), 360))
-    with st.expander("Why `scikit-learn < 1.6`?"):
-        st.write("`factor_analyzer` 0.5.x fails with newer scikit-learn releases (an error such as "
-                 "`check_array() got an unexpected keyword argument 'force_all_finite'`), so `requirements.txt` pins it.")
+    st.markdown(_table(missing), unsafe_allow_html=True)
 
     notebook = [r for r in env["rows"] if r["optional"] and r["status"] != "ok"]
     with_nb = False
