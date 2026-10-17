@@ -10,6 +10,15 @@ every interactive choice, data/final_dataset/user_selection.json:
 Every prompt shows its default in brackets; Enter accepts it. Answers can also be
 given up front (command-line flags of run_analysis.py), in which case only the
 missing ones are asked for.
+
+The checks and the bookkeeping behind the prompts are plain functions, so that other
+front ends (the web app) can use them without a terminal:
+
+    inspect_inputs()      load the two layers, validate them, align the CRS
+    check_layers()        the validation alone
+    parse_buffers()       buffer distances -> validated list
+    numeric_columns()     the columns a variable can be chosen from
+    save_selection()      write the stage-1 selection
 """
 import os, json
 import geopandas as gpd
@@ -33,9 +42,13 @@ def _yes(prompt):
     return input(f"{prompt} [Y/n] ").strip().lower() in ("", "y", "yes")
 
 
-def _numeric_columns(gdf):
+def numeric_columns(gdf):
+    """The columns of the neighborhoods layer a variable can be chosen from (numeric, not id)."""
     return [c for c in gdf.columns
             if c not in ("id", "geometry") and gdf[c].dtype.kind in "iuf"]
+
+
+_numeric_columns = numeric_columns
 
 
 def _parse_choice(text, options):
@@ -96,6 +109,25 @@ def check_layers(edges, neighborhoods):
     return problems
 
 
+def inspect_inputs(streets_path, neighborhoods_path):
+    """
+    Load the two input layers and check them. Returns a dict:
+      edges, neighborhoods : the layers (the neighborhoods reprojected to the streets CRS when needed)
+      problems             : reasons the layers cannot be processed (empty = fine; then the rest is unset)
+      note                 : the reprojection note, or None
+      summary              : one line with the counts and the CRS
+    Raises FileNotFoundError (or the reader's error) when a file cannot be read.
+    """
+    edges, neighborhoods = _read_layer(streets_path), _read_layer(neighborhoods_path)
+    problems = check_layers(edges, neighborhoods)
+    if problems:
+        return {"edges": edges, "neighborhoods": neighborhoods, "problems": problems, "note": None, "summary": ""}
+    neighborhoods, note = align_neighborhoods_crs(edges, neighborhoods)
+    summary = (f"streets: {len(edges)} segments | neighborhoods: {len(neighborhoods)} polygons "
+               f"| CRS: {crs_label(neighborhoods.crs)}")
+    return {"edges": edges, "neighborhoods": neighborhoods, "problems": [], "note": note, "summary": summary}
+
+
 def select_input_files(defaults, preset=None):
     """Ask for the two input shapefiles (or take them from preset), validate, return (streets, nbhd, gdf)."""
     preset = dict(preset or {})
@@ -103,24 +135,21 @@ def select_input_files(defaults, preset=None):
         streets = preset.get("streets_path") or _ask("Street centerline shapefile", defaults["streets_path"])
         nbhd = preset.get("neighborhoods_path") or _ask("Neighborhoods shapefile", defaults["neighborhoods_path"])
         try:
-            edges, neighborhoods = _read_layer(streets), _read_layer(nbhd)
+            info = inspect_inputs(streets, nbhd)
         except Exception as e:
             print(f"  -> {e}")
             preset = {}
             continue
-        problems = check_layers(edges, neighborhoods)
-        if problems:
+        if info["problems"]:
             print("  -> the layers cannot be processed as they are:")
-            for p in problems:
+            for p in info["problems"]:
                 print(f"     - {p}")
             preset = {}
             continue
-        neighborhoods, note = align_neighborhoods_crs(edges, neighborhoods)
-        if note:
-            print(f"  note: {note}")
-        print(f"  streets: {len(edges)} segments | neighborhoods: {len(neighborhoods)} polygons "
-              f"| CRS: {crs_label(neighborhoods.crs)}")
-        return streets, nbhd, neighborhoods
+        if info["note"]:
+            print(f"  note: {info['note']}")
+        print(f"  {info['summary']}")
+        return streets, nbhd, info["neighborhoods"]
 
 
 # --------------------------------------------------------------------------
@@ -176,7 +205,7 @@ def select_buffers(default, preset=None):
 def select_variables(neighborhoods, preset_crime=None, preset_controls=None):
     """Return (crime_col, ctrl_vars) chosen among the numeric columns of the neighborhoods layer."""
     gdf = _read_layer(neighborhoods) if isinstance(neighborhoods, str) else neighborhoods
-    options = _numeric_columns(gdf)
+    options = numeric_columns(gdf)
     if not options:
         raise ValueError("the neighborhoods layer has no numeric columns besides 'id'")
     print("\nNumeric columns in the neighborhoods layer:")
@@ -213,12 +242,27 @@ def select_variables(neighborhoods, preset_crime=None, preset_controls=None):
 # --------------------------------------------------------------------------
 # stage-1 setup: everything the pipeline needs, saved to user_selection.json
 # --------------------------------------------------------------------------
-def _summary(sel):
+def selection_summary(sel):
+    """The stage-1 selection as an indented block of text."""
     return (f"  streets             : {sel['streets_path']}\n"
             f"  neighborhoods       : {sel['neighborhoods_path']}\n"
             f"  buffers (miles)     : {', '.join(str(b) for b in sel['buffer_list_mile'])}\n"
             f"  dependent variable  : {sel['crime_col']}\n"
             f"  control variables   : {', '.join(sel['ctrl_vars'])}")
+
+
+_summary = selection_summary
+
+
+def save_selection(sel, selection_path=SELECTION_PATH):
+    """
+    Write the stage-1 selection, replacing the file: a new stage-1 setup starts a fresh
+    record, so stage-2 choices made for other inputs are not carried over.
+    """
+    os.makedirs(os.path.dirname(selection_path), exist_ok=True)
+    with open(selection_path, "w") as f:
+        json.dump(sel, f, indent=2)
+    return sel
 
 
 def run_setup(defaults, preset=None, reuse=False, selection_path=SELECTION_PATH):
@@ -235,7 +279,7 @@ def run_setup(defaults, preset=None, reuse=False, selection_path=SELECTION_PATH)
         with open(selection_path) as f:
             prev = json.load(f)
         if all(k in prev for k in STAGE1_KEYS):
-            print(f"\nPrevious selection found in {selection_path}:\n{_summary(prev)}")
+            print(f"\nPrevious selection found in {selection_path}:\n{selection_summary(prev)}")
             if reuse or _yes("Reuse it?"):
                 missing = [p for p in (prev["streets_path"], prev["neighborhoods_path"]) if not os.path.exists(p)]
                 if not missing:
@@ -249,10 +293,8 @@ def run_setup(defaults, preset=None, reuse=False, selection_path=SELECTION_PATH)
 
     sel = {"streets_path": streets, "neighborhoods_path": nbhd, "buffer_list_mile": buffers,
            "crime_col": crime_col, "ctrl_vars": ctrl_vars}
-    os.makedirs(os.path.dirname(selection_path), exist_ok=True)
-    with open(selection_path, "w") as f:
-        json.dump(sel, f, indent=2)       # a new stage-1 setup starts a fresh file: stage-2 choices must be redone
-    print(f"\nSelection saved to {selection_path}:\n{_summary(sel)}")
+    save_selection(sel, selection_path)
+    print(f"\nSelection saved to {selection_path}:\n{selection_summary(sel)}")
     return sel
 
 

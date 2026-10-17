@@ -268,6 +268,17 @@ class StreetNetworkProcessor:
         """
         checkpoint_dir = self._checkpoint_dir()
         print(f"Checkpoints: {checkpoint_dir}")
+        if recompute:
+            # drop the checkpoints of this run's buffers now, not buffer by buffer: a recompute run that is
+            # interrupted and then resumed must not fall back on the old files of the buffers it never reached
+            removed = 0
+            for b in buffer_list_mile:
+                path = self._checkpoint_path(checkpoint_dir, b)
+                if os.path.exists(path):
+                    os.remove(path)
+                    removed += 1
+            if removed:
+                print(f"Recompute: {removed} existing checkpoint file(s) of these buffers removed.")
 
         for self.buffer_mile in buffer_list_mile:
             self.buffer_distance_feet = self.buffer_mile * 5280  # Convert miles to feet
