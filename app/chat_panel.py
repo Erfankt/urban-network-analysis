@@ -2,7 +2,8 @@
 import time
 import streamlit as st
 
-from chat import (load_config, check_provider, stream_reply, system_message, SUGGESTIONS, save_settings,
+import pipeline as pl
+from chat import (load_config, check_provider, agent_reply, system_message, SUGGESTIONS, save_settings,
                   validate_key, discover_gemini_model, ollama_state, pull_model, KEY_PAGES, OLLAMA_DOWNLOAD, DEFAULT_MODELS)
 
 def provider_status(force=False):
@@ -100,6 +101,38 @@ def _setup_panel(can_close):
 
 
 
+def _data_context():
+    """Where the assistant's tools find the data of the current run."""
+    inp = st.session_state.run.get("inputs") or {}
+    present, _ = pl.final_outputs()
+    return {"neighborhoods_path": inp.get("neighborhoods_path"), "streets_path": inp.get("streets_path"),
+            "id_col": inp.get("id_col", "id"),
+            "measures_path": str(pl.MEASURES_PATH) if pl.measures_available() else None,
+            "final_csv": str(present["csv"]) if present.get("csv") else None}
+
+
+def _tool_box(ev, key):
+    """A collapsed note of what the assistant looked up, with the table it produced (and a download)."""
+    args = ", ".join(f"{k}={v}" for k, v in (ev.get("args") or {}).items())
+    with st.expander(f"Looked up: {ev['name']}({args})", expanded=ev.get("table") is not None):
+        if ev.get("table") is not None:
+            st.dataframe(ev["table"], use_container_width=True, hide_index=True, height=220)
+            st.download_button("Download CSV", ev["table"].to_csv(index=False).encode("utf-8"),
+                               file_name=f"{ev['name']}.csv", mime="text/csv", key=key)
+        else:
+            st.caption(ev["text"])
+
+
+def _show(message, idx):
+    """One chat message: its text and the lookups in the order they happened."""
+    for j, seg in enumerate(message.get("segments") or [{"type": "text", "content": message["content"]}]):
+        if seg["type"] == "text":
+            if seg["content"].strip():
+                st.markdown(seg["content"])
+        else:
+            _tool_box(seg, key=f"dl_{idx}_{j}")
+
+
 def render(page):
     status = provider_status()
     cfg, ok = status["cfg"], status["ok"]
@@ -139,18 +172,36 @@ def render(page):
         with box:
             if not history:
                 st.caption("The assistant sees the inputs, the stage-1 status and every table of the "
-                           "component analysis as you go, and can explain or advise on each step. "
-                           "It never changes anything: every choice stays yours, in the app.")
-            for m in history:
+                           "component analysis as you go, and can look things up in your data (for example the area of "
+                           "every neighborhood). It never changes anything: every choice stays yours, in the app.")
+            for i, m in enumerate(history):
                 with st.chat_message(m["role"]):
-                    st.markdown(m["content"])
+                    _show(m, i)
             if question:
                 system = system_message(st.session_state.run, page)
                 messages = [{"role": m["role"], "content": m["content"]} for m in history]
+                segments, text = [], ""
                 with st.chat_message("assistant"):
+                    slot = st.empty()
                     try:
-                        reply = st.write_stream(stream_reply(cfg, system, messages))
+                        for ev in agent_reply(cfg, system, messages, ctx=_data_context()):
+                            if ev[0] == "text":
+                                text += ev[1]
+                                slot.markdown(text + "▌")
+                            else:
+                                slot.markdown(text)
+                                if text.strip():
+                                    segments.append({"type": "text", "content": text})
+                                text = ""
+                                tool = dict(ev[1], type="tool")
+                                segments.append(tool)
+                                _tool_box(tool, key=f"dl_new_{len(history)}_{len(segments)}")
+                                slot = st.empty()
+                        slot.markdown(text)
                     except Exception as e:                       # network, model or key problems
-                        reply = f"The model could not answer: {e}"
-                        st.error(reply)
-                history.append({"role": "assistant", "content": reply if isinstance(reply, str) else str(reply)})
+                        text += f"\n\nThe model could not answer: {e}"
+                        slot.error(text)
+                if text.strip():
+                    segments.append({"type": "text", "content": text})
+                reply = "\n\n".join(s["content"] for s in segments if s["type"] == "text")
+                history.append({"role": "assistant", "content": reply, "segments": segments})

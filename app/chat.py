@@ -182,8 +182,14 @@ def pull_model(cfg):
 
 
 # ---------------------------------------------------------------------------
-# Calling the model (streaming)
+# Calling the model (streaming, with tools)
 # ---------------------------------------------------------------------------
+# Each provider function runs ONE round and yields events: ("text", piece) while the reply streams, and at
+# the end ("calls", [{"name", "args", "id"}], raw) when the model asks for tools (raw = what to send back as
+# the model's turn). agent_reply() loops: round, run the tools, round again, until the model answers.
+
+MAX_ROUNDS = 5             # tool rounds per question
+
 
 def _sse_json(resp):
     """Yield the JSON objects of a server-sent-events stream (lines starting with 'data: ')."""
@@ -199,11 +205,17 @@ def _sse_json(resp):
             continue
 
 
-def _stream_ollama(cfg, system, messages):
+def _round_ollama(cfg, system, messages, tools):
     body = {"model": cfg["model"], "stream": True,
             "messages": [{"role": "system", "content": system}] + messages,
             "options": {"temperature": 0.2, "num_ctx": 8192}}
+    if tools:
+        body["tools"] = [{"type": "function", "function": t} for t in tools]
+    calls = []
     with requests.post(f"{cfg['ollama_url']}/api/chat", json=body, stream=True, timeout=TIMEOUT) as r:
+        if r.status_code == 400 and tools:                      # this model does not take tools: answer without
+            yield from _round_ollama(cfg, system, messages, None)
+            return
         r.raise_for_status()
         for raw in r.iter_lines(decode_unicode=True):
             if not raw:
@@ -211,61 +223,145 @@ def _stream_ollama(cfg, system, messages):
             chunk = json.loads(raw)
             if "error" in chunk:
                 raise RuntimeError(chunk["error"])
-            text = chunk.get("message", {}).get("content", "")
-            if text:
-                yield text
+            msg = chunk.get("message", {})
+            if msg.get("content"):
+                yield ("text", msg["content"])
+            for c in msg.get("tool_calls", []) or []:
+                fn = c.get("function", {})
+                calls.append({"name": fn.get("name"), "args": fn.get("arguments") or {}, "id": None})
             if chunk.get("done"):
                 break
+    if calls:
+        raw_turn = {"role": "assistant", "content": "",
+                    "tool_calls": [{"function": {"name": c["name"], "arguments": c["args"]}} for c in calls]}
+        yield ("calls", calls, raw_turn)
 
 
-def _stream_groq(cfg, system, messages):
+def _round_groq(cfg, system, messages, tools):
     body = {"model": cfg["model"], "stream": True, "temperature": 0.2,
             "messages": [{"role": "system", "content": system}] + messages}
+    if tools:
+        body["tools"] = [{"type": "function", "function": t} for t in tools]
     headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+    partial = {}
     with requests.post(f"{GROQ_URL}/chat/completions", json=body, headers=headers,
                        stream=True, timeout=TIMEOUT) as r:
         if r.status_code != 200:
             raise RuntimeError(f"Groq answered {r.status_code}: {r.text[:300]}")
         for chunk in _sse_json(r):
             for choice in chunk.get("choices", []):
-                text = choice.get("delta", {}).get("content")
-                if text:
-                    yield text
+                delta = choice.get("delta", {})
+                if delta.get("content"):
+                    yield ("text", delta["content"])
+                for tc in delta.get("tool_calls", []) or []:
+                    p = partial.setdefault(tc.get("index", 0), {"id": None, "name": "", "arguments": ""})
+                    p["id"] = tc.get("id") or p["id"]
+                    fn = tc.get("function", {})
+                    p["name"] += fn.get("name") or ""
+                    p["arguments"] += fn.get("arguments") or ""
+    if partial:
+        calls, raw_calls = [], []
+        for i, p in sorted(partial.items()):
+            try:
+                args = json.loads(p["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            cid = p["id"] or f"call_{i}"
+            calls.append({"name": p["name"], "args": args, "id": cid})
+            raw_calls.append({"id": cid, "type": "function",
+                              "function": {"name": p["name"], "arguments": json.dumps(args)}})
+        yield ("calls", calls, {"role": "assistant", "content": None, "tool_calls": raw_calls})
 
 
-def _stream_gemini(cfg, system, messages):
-    contents = [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
-                for m in messages]
+def _round_gemini(cfg, system, contents, tools):
     body = {"system_instruction": {"parts": [{"text": system}]}, "contents": contents,
             "generationConfig": {"temperature": 0.2}}
-    model = cfg["model"]
+    if tools:
+        body["tools"] = [{"functionDeclarations": tools}]
     for attempt in (1, 2):
-        url = f"{GEMINI_URL}/models/{model}:streamGenerateContent?alt=sse&key={cfg['api_key']}"
+        url = f"{GEMINI_URL}/models/{cfg['model']}:streamGenerateContent?alt=sse&key={cfg['api_key']}"
         with requests.post(url, json=body, stream=True, timeout=TIMEOUT) as r:
             if r.status_code == 404 and attempt == 1:
                 # the model was retired or renamed: look up one this key can use, remember it, and retry
                 try:
-                    found = discover_gemini_model(cfg["api_key"], avoid=model)
+                    found = discover_gemini_model(cfg["api_key"], avoid=cfg["model"])
                 except requests.RequestException:
                     found = None
                 if found:
-                    model = found
+                    cfg["model"] = found
                     save_settings({"GEMINI_MODEL": found})
                     continue
             if r.status_code != 200:
                 raise RuntimeError(f"Gemini answered {r.status_code}: {r.text[:300]}")
+            calls, parts_out = [], []
             for chunk in _sse_json(r):
                 for cand in chunk.get("candidates", []):
                     for part in cand.get("content", {}).get("parts", []):
-                        if part.get("text"):
-                            yield part["text"]
+                        if part.get("text") and not part.get("thought"):
+                            yield ("text", part["text"])
+                        if "functionCall" in part:
+                            fc = part["functionCall"]
+                            calls.append({"name": fc.get("name"), "args": fc.get("args") or {}, "id": None})
+                            parts_out.append(part)           # kept whole: newer models require their signature back
+            if calls:
+                yield ("calls", calls, {"role": "model", "parts": parts_out})
             return
 
 
+def _to_gemini(messages):
+    return [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
+            for m in messages]
+
+
+def _result_messages(provider, calls, results):
+    """The tool answers, in the shape each provider expects them after the model's own turn."""
+    if provider == "gemini":
+        return [{"role": "user", "parts": [{"functionResponse": {"name": c["name"], "response": {"result": t}}}
+                                           for c, t in zip(calls, results)]}]
+    if provider == "groq":
+        return [{"role": "tool", "tool_call_id": c["id"], "content": t} for c, t in zip(calls, results)]
+    return [{"role": "tool", "tool_name": c["name"], "content": t} for c, t in zip(calls, results)]
+
+
+def agent_reply(cfg, system, messages, ctx=None, tools=None):
+    """
+    Answer the last question in `messages`, letting the model look things up with the tools.
+    Yields ("text", piece) as the reply streams and ("tool", {"name", "args", "text", "table"}) after
+    each tool the model used, so the panel can show both.
+    """
+    import tools as tool_mod
+    tools = TOOLS_ON and (tool_mod.TOOLS if tools is None else tools) or None
+    provider = cfg["provider"]
+    rnd = {"ollama": _round_ollama, "gemini": _round_gemini, "groq": _round_groq}[provider]
+    history = messages[-HISTORY_TURNS:]
+    convo = _to_gemini(history) if provider == "gemini" else list(history)
+    for step in range(MAX_ROUNDS + 1):
+        offer = tools if step < MAX_ROUNDS else None           # the last round must answer in words
+        calls = raw = None
+        for ev in rnd(cfg, system, convo, offer):
+            if ev[0] == "text":
+                yield ev
+            else:
+                calls, raw = ev[1], ev[2]
+        if not calls:
+            return
+        results = []
+        for c in calls:
+            out = tool_mod.call_tool(c["name"], c["args"], ctx or {})
+            results.append(out["text"])
+            yield ("tool", {"name": c["name"], "args": c["args"], "text": out["text"], "table": out["table"]})
+        convo.append(raw)
+        convo.extend(_result_messages(provider, calls, results))
+
+
+TOOLS_ON = os.getenv("ASSISTANT_TOOLS", "1").strip() != "0"     # ASSISTANT_TOOLS=0 turns the lookups off
+
+
 def stream_reply(cfg, system, messages):
-    """Yield the reply to `messages` (the chat history, last one the question) piece by piece."""
-    fn = {"ollama": _stream_ollama, "gemini": _stream_gemini, "groq": _stream_groq}[cfg["provider"]]
-    yield from fn(cfg, system, messages[-HISTORY_TURNS:])
+    """The reply as plain text pieces, without tools (kept for simple uses)."""
+    for ev in agent_reply(cfg, system, messages, tools=[]):
+        if ev[0] == "text":
+            yield ev[1]
 
 
 # ---------------------------------------------------------------------------
@@ -276,11 +372,13 @@ ROLE = """You are the assistant built into a web app that runs a data pipeline f
 street networks and property crime (Kefayat & Thill, 2025, ISPRS IJGI 14(5):200). The user moves \
 through four sections of one page: Inputs, Stage 1 (street-network measures), Stage 2 (component analysis) and \
 Final dataset. You explain the steps, the measures and the diagnostics, and you interpret the numbers \
-of the current run that are given to you below, suggesting choices with your reasons; the user makes \
-every choice by clicking in the app. You cannot run anything, change files or see anything beyond \
-what is given here. When a number you need is not in the run description, say that it is not available \
-yet and which section produces it. Answer briefly and concretely, in plain language, and quote the \
-numbers you rely on."""
+of the current run, suggesting choices with your reasons; the user makes every choice by clicking in the app. \
+You have read-only tools to look things up in the user's data: list the columns, compute the area of every \
+neighborhood, summarize or correlate columns, fetch the values of given neighborhoods. When the user asks for a \
+number or a calculation on the data, call a tool instead of guessing, then quote the result; when the \
+tool says the data does not exist yet, tell the user which section produces it. A table a tool produces is \
+shown to the user in the chat automatically, so say that it is there rather than retyping it. You cannot run \
+code, change files or choose for the user. Answer briefly and concretely, in plain language."""
 
 METHOD_NOTES = """METHOD NOTES
 Inputs: a cleaned street centerline layer (projected CRS in US feet; it defines the working CRS) and \
@@ -375,17 +473,20 @@ def system_message(run, page):
 
 
 SUGGESTIONS = {
-    "Inputs": ["What must the two input layers contain?",
+    "Inputs": ["Compute the area in acres of all neighborhoods.",
+               "What must the two input layers contain?",
                "Why do the streets have to be in a CRS in feet?",
                "What does the CRS warning mean?"],
-    "Stage 1": ["What do the buffer distances mean, and why five of them?",
+    "Stage 1": ["Compute the area in acres of all neighborhoods.",
+                "What do the buffer distances mean, and why five of them?",
                 "Explain the eight measures in one line each.",
                 "Why do the larger buffers take so much longer?"],
     "Stage 2": ["How many components would you keep for the street-network block, and why?",
                 "Which measure should represent each component?",
                 "What is a cross-loading and does it matter here?",
                 "principal or minres: what is the difference?"],
-    "Final dataset": ["How do I use each column in the models?",
+    "Final dataset": ["Compute the area in acres of all neighborhoods.",
+                      "How do I use each column in the models?",
                       "Why log(x + 1) for the representatives but not for the scores?",
                       "What is area_acre for?"],
 }
