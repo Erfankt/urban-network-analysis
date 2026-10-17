@@ -3,7 +3,7 @@ import time
 import streamlit as st
 
 from chat import (load_config, check_provider, stream_reply, system_message, SUGGESTIONS, save_settings,
-                  validate_key, ollama_state, pull_model, KEY_PAGES, OLLAMA_DOWNLOAD, DEFAULT_MODELS)
+                  validate_key, discover_gemini_model, ollama_state, pull_model, KEY_PAGES, OLLAMA_DOWNLOAD, DEFAULT_MODELS)
 
 def provider_status(force=False):
     """The provider configuration and whether it answers, re-checked every 30 s or on demand."""
@@ -36,7 +36,15 @@ def _key_tab(provider):
         with st.spinner("Checking the key…"):
             ok, message = validate_key(provider, key)
         if ok:
-            save_settings({f"{provider.upper()}_API_KEY": key, "LLM_PROVIDER": provider})
+            updates = {f"{provider.upper()}_API_KEY": key, "LLM_PROVIDER": provider}
+            if provider == "gemini":                         # models get retired: use one this key can call now
+                try:
+                    found = discover_gemini_model(key)
+                except Exception:
+                    found = None
+                if found:
+                    updates["GEMINI_MODEL"] = found
+            save_settings(updates)
             _connected()
         else:
             st.error(message)

@@ -8,7 +8,7 @@ Ollama server and its llama3.2 model, and works without the chat when there is n
 
     LLM_PROVIDER   ollama | gemini | groq   (unset: gemini or groq when its key is set, else ollama)
     OLLAMA_URL     http://localhost:11434   OLLAMA_MODEL  llama3.2
-    GEMINI_API_KEY                           GEMINI_MODEL  gemini-2.5-flash
+    GEMINI_API_KEY                           GEMINI_MODEL  gemini-flash-latest
     GROQ_API_KEY                             GROQ_MODEL    llama-3.3-70b-versatile
 
 The three providers are called over plain HTTP (no SDKs), streaming the reply. Every call
@@ -16,7 +16,7 @@ carries a system message made of fixed method notes (what the pipeline computes 
 paper chose) and a description of the current run (inputs, stage-1 status, the eigenvalues,
 the solutions inspected, the choices made), so the answers refer to the user's own numbers.
 """
-import json, os
+import json, os, re
 from pathlib import Path
 
 import requests
@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 REPO_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(REPO_DIR / ".env")
 
-DEFAULT_MODELS = {"ollama": "llama3.2", "gemini": "gemini-2.5-flash", "groq": "llama-3.3-70b-versatile"}
+DEFAULT_MODELS = {"ollama": "llama3.2", "gemini": "gemini-flash-latest", "groq": "llama-3.3-70b-versatile"}
 GROQ_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
 GEMINI_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
 HISTORY_TURNS = 8          # how many past messages go with each question
@@ -123,6 +123,37 @@ def validate_key(provider, key):
     return False, f"The service answered {r.status_code}. Try again in a moment."
 
 
+def discover_gemini_model(key, avoid=""):
+    """
+    The newest stable Flash model this key can call (models are retired from time to time, so the
+    name is looked up, not assumed). Returns its name, e.g. 'gemini-3-flash', or None.
+    """
+    names, token = [], None
+    for _ in range(6):
+        params = {"key": key.strip(), "pageSize": 100}
+        if token:
+            params["pageToken"] = token
+        r = requests.get(f"{GEMINI_URL}/models", params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        for m in data.get("models", []):
+            if "generateContent" in m.get("supportedGenerationMethods", []):
+                names.append(m["name"].split("/", 1)[-1])
+        token = data.get("nextPageToken")
+        if not token:
+            break
+    versioned = []
+    for n in names:
+        m = re.fullmatch(r"gemini-(\d+(?:\.\d+)?)-flash", n)
+        if m and n != avoid:
+            versioned.append((float(m.group(1)), n))
+    if versioned:
+        return max(versioned)[1]
+    plain = [n for n in names if "flash" in n and n != avoid
+             and not re.search(r"lite|preview|exp|image|tts|live|thinking|audio|8b", n)]
+    return sorted(plain)[-1] if plain else None
+
+
 def ollama_state(cfg):
     """'no_server' (Ollama not installed or not running), 'no_model' (running, model not downloaded) or 'ready'."""
     try:
@@ -207,15 +238,28 @@ def _stream_gemini(cfg, system, messages):
                 for m in messages]
     body = {"system_instruction": {"parts": [{"text": system}]}, "contents": contents,
             "generationConfig": {"temperature": 0.2}}
-    url = f"{GEMINI_URL}/models/{cfg['model']}:streamGenerateContent?alt=sse&key={cfg['api_key']}"
-    with requests.post(url, json=body, stream=True, timeout=TIMEOUT) as r:
-        if r.status_code != 200:
-            raise RuntimeError(f"Gemini answered {r.status_code}: {r.text[:300]}")
-        for chunk in _sse_json(r):
-            for cand in chunk.get("candidates", []):
-                for part in cand.get("content", {}).get("parts", []):
-                    if part.get("text"):
-                        yield part["text"]
+    model = cfg["model"]
+    for attempt in (1, 2):
+        url = f"{GEMINI_URL}/models/{model}:streamGenerateContent?alt=sse&key={cfg['api_key']}"
+        with requests.post(url, json=body, stream=True, timeout=TIMEOUT) as r:
+            if r.status_code == 404 and attempt == 1:
+                # the model was retired or renamed: look up one this key can use, remember it, and retry
+                try:
+                    found = discover_gemini_model(cfg["api_key"], avoid=model)
+                except requests.RequestException:
+                    found = None
+                if found:
+                    model = found
+                    save_settings({"GEMINI_MODEL": found})
+                    continue
+            if r.status_code != 200:
+                raise RuntimeError(f"Gemini answered {r.status_code}: {r.text[:300]}")
+            for chunk in _sse_json(r):
+                for cand in chunk.get("candidates", []):
+                    for part in cand.get("content", {}).get("parts", []):
+                        if part.get("text"):
+                            yield part["text"]
+            return
 
 
 def stream_reply(cfg, system, messages):
