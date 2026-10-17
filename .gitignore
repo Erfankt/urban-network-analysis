@@ -17,6 +17,9 @@ __pycache__/
 # ArcGIS metadata written next to the input layers
 data/**/*.xml
 
+# Web app: the assistant's keys and settings
+.env
+
 # ============================================
 # IDEs
 # ============================================
