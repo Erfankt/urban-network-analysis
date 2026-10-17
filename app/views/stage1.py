@@ -15,31 +15,88 @@ def _elapsed(seconds):
     return f"{h}h {m:02d}m {s:02d}s" if h else f"{m}m {s:02d}s"
 
 
-def _settings(inputs, prev):
-    """The stage-1 choices (buffers, dependent variable, controls); returns a selection dict or None."""
-    default_buffers = ", ".join(str(b) for b in (prev or {}).get("buffer_list_mile", pl.DEFAULTS["buffer_list_mile"]))
-    text = st.text_input("Buffer distances around each neighborhood, in miles (comma-separated)", value=default_buffers,
-                         help="Positive, distinct, at most two decimals; the paper's five bands are the default.")
-    buffers = None
-    try:
-        buffers = pl.parse_buffers(text)
-        codes = pl.buffer_codes(buffers)
-        st.caption("Column suffixes: " + ", ".join(f"{b} mi → `{c}`" for b, c in codes.items()))
-    except ValueError as e:
-        st.error(str(e))
+def _buffer_state(prev):
+    """The list of buffer distances being built (kept in the session, sorted and validated)."""
+    if "buffers" not in st.session_state:
+        st.session_state["buffers"] = list((prev or {}).get("buffer_list_mile", pl.DEFAULTS["buffer_list_mile"]))
+    return st.session_state["buffers"]
 
+
+def _add_buffer():
+    """Callback: validate the distance typed in and append it to the list."""
+    value = round(float(st.session_state["buffer_new"]), 2)
+    current = st.session_state["buffers"]
+    if value in current:
+        st.session_state["buffer_msg"] = f"{value} mi is already in the list."
+        return
+    try:
+        st.session_state["buffers"] = pl.parse_buffers(",".join(str(b) for b in current + [value]))
+        st.session_state["buffer_msg"] = None
+    except ValueError as e:
+        st.session_state["buffer_msg"] = str(e)
+
+
+def _remove_buffer(value):
+    st.session_state["buffers"] = [b for b in st.session_state["buffers"] if b != value]
+    st.session_state["buffer_msg"] = None
+
+
+def _reset_buffers():
+    st.session_state["buffers"] = list(pl.DEFAULTS["buffer_list_mile"])
+    st.session_state["buffer_msg"] = None
+
+
+def _set_controls(options, value):
+    for c in options:
+        st.session_state[f"ctrl_{c}"] = value
+
+
+def _settings(inputs, prev):
+    """The stage-1 choices (buffers, crime variable, controls); returns a selection dict or None."""
+    # ---- buffer distances: type one, add it, the list grows
+    buffers = _buffer_state(prev)
+    st.markdown("**Buffer distances around each neighborhood (miles)**",
+                help="Type a distance and press Add. Distances are positive and distinct; those of 1 mile or more "
+                     "are multiples of 0.1. The paper's five bands are the default.")
+    c1, c2, c3 = st.columns([2, 1, 2], vertical_alignment="bottom")
+    c1.number_input("Distance to add", min_value=0.01, max_value=50.0, value=0.25, step=0.05, format="%.2f",
+                    key="buffer_new")
+    c2.button("Add", on_click=_add_buffer, use_container_width=True)
+    c3.button("Reset to the paper's bands", on_click=_reset_buffers, type="tertiary")
+    if st.session_state.get("buffer_msg"):
+        st.error(st.session_state["buffer_msg"])
+    if buffers:
+        cols = st.columns(min(len(buffers), 6) + 1)
+        for i, b in enumerate(buffers):
+            cols[i % (len(cols) - 1)].button(f"{b} mi  ✕", key=f"buf_rm_{b}", on_click=_remove_buffer, args=(b,),
+                                             help="Remove this distance")
+    else:
+        st.warning("Add at least one distance.")
+
+    # ---- the crime (dependent) variable
     columns = inputs["columns"]
     prev_crime = (prev or {}).get("crime_col")
-    crime = st.selectbox("Dependent variable (crime count)", columns,
+    crime = st.selectbox("Crime variable (dependent variable)", columns,
                          index=columns.index(prev_crime) if prev_crime in columns else 0)
+
+    # ---- control variables: tick the columns
     options = [c for c in columns if c != crime]
-    prev_ctrl = [c for c in (prev or {}).get("ctrl_vars", []) if c in options]
-    controls = st.multiselect("Control variables", options, default=prev_ctrl,
-                              help="The socio-spatial variables reduced in stage 2; the paper used 16.")
-    if buffers is None or not controls:
+    prev_ctrl = [c for c in (prev or {}).get("ctrl_vars", [])]
+    for c in options:
+        st.session_state.setdefault(f"ctrl_{c}", c in prev_ctrl)
+    st.markdown("**Control variables**", help="The socio-spatial variables reduced in stage 2; the paper used 16.")
+    b1, b2, _ = st.columns([1, 1, 4])
+    b1.button("Select all", on_click=_set_controls, args=(options, True), use_container_width=True)
+    b2.button("Clear", on_click=_set_controls, args=(options, False), use_container_width=True)
+    grid = st.columns(4)
+    for i, c in enumerate(options):
+        grid[i % 4].checkbox(c, key=f"ctrl_{c}")
+    controls = [c for c in options if st.session_state.get(f"ctrl_{c}")]
+    st.caption(f"{len(controls)} of {len(options)} selected.")
+    if not buffers or not controls:
         return None
     return {"streets_path": inputs["streets_path"], "neighborhoods_path": inputs["neighborhoods_path"],
-            "id_col": inputs["id_col"], "buffer_list_mile": buffers, "crime_col": crime, "ctrl_vars": controls}
+            "id_col": inputs["id_col"], "buffer_list_mile": list(buffers), "crime_col": crime, "ctrl_vars": controls}
 
 
 def _progress_panel(status):
