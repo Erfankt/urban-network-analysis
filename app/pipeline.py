@@ -8,7 +8,7 @@ Everything goes through the same functions as the terminal scripts, from the sam
 directory (src/), so a run made from the app leaves the same files in the same places:
 data/final_dataset/, data/checkpoints/ and output/pca_diagnostics/.
 """
-import io, json, os, re, subprocess, sys, time, zipfile
+import io, json, os, re, shutil, subprocess, sys, time, zipfile
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent
@@ -17,6 +17,7 @@ SRC_DIR = REPO_DIR / "src"
 DATA_DIR = REPO_DIR / "data"
 FINAL_DIR = DATA_DIR / "final_dataset"
 OUT_DIR = REPO_DIR / "output" / "pca_diagnostics"
+OUTPUT_DIR = REPO_DIR / "output"                       # everything the app and the scripts write besides data/
 APP_OUT_DIR = REPO_DIR / "output" / "app"           # the stage-1 log and run record
 STAGE1_LOG = APP_OUT_DIR / "stage1.log"
 STAGE1_RUN = APP_OUT_DIR / "stage1_run.json"
@@ -515,6 +516,37 @@ def stop_stage1():
         except psutil.TimeoutExpired:
             p.kill()
     return status
+
+
+def clear_output_dir():
+    """
+    Empty output/ (the stage-1 log and run record, the diagnostic figures) when the app shuts down.
+    Only the contents go: the folder stays, and so do data/ (the measures, the checkpoints, the final
+    dataset) and everything outside the repository's output/ folder. A stage-1 run that is still going
+    keeps output/app, its log and run record. Set KEEP_OUTPUT=1 in the environment to keep the folder as is.
+    """
+    try:
+        if os.environ.get("KEEP_OUTPUT") == "1":
+            return
+        out = OUTPUT_DIR
+        if out.is_symlink() or not out.is_dir() or out.resolve() != (REPO_DIR.resolve() / "output"):
+            return
+        try:
+            running = stage1_status()["state"] == "running"
+        except Exception:
+            running = False
+        for item in out.iterdir():
+            if running and item.name == "app":
+                continue
+            try:
+                if item.is_dir() and not item.is_symlink():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+            except OSError:
+                pass
+    except Exception:
+        pass                                    # never block a shutdown
 
 
 def measures_available():

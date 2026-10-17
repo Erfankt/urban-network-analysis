@@ -8,6 +8,7 @@ The sections call app/pipeline.py, which calls the functions in src/; nothing is
 The assistant (app/chat.py) answers with a local Ollama model by default or with a Gemini or
 Groq key from .env, and the app works without it.
 """
+import atexit
 import sys
 from pathlib import Path
 
@@ -43,6 +44,8 @@ def step_states():
     present, _ = pl.final_outputs()
     built = bool(present["csv"] and present["dictionary"])
     st1_state, st1_label = STAGE1_STATE[s1]
+    if s1 == "none" and measures:
+        st1_state, st1_label = "done", "Measures from an earlier run"
     if s1 == "finished" and not measures:
         st1_state, st1_label = "warn", "Finished, measures do not match"
     return [
@@ -59,6 +62,15 @@ def current_step(states):
     """The first step not finished: the assistant's context and the highlighted step of the sidebar."""
     return next((a for a, _, state, _ in states if state != "done"), states[-1][0])
 
+
+@st.cache_resource
+def _clear_output_at_exit():
+    """Once per server process: empty output/ when the app shuts down (Ctrl+C in the terminal)."""
+    atexit.register(pl.clear_output_dir)
+    return True
+
+
+_clear_output_at_exit()
 
 theme.inject()
 with st.sidebar:
