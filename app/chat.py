@@ -76,6 +76,81 @@ def check_provider(cfg):
 
 
 # ---------------------------------------------------------------------------
+# Setting the assistant up from the app (no file editing)
+# ---------------------------------------------------------------------------
+
+ENV_PATH = REPO_DIR / ".env"
+KEY_PAGES = {"gemini": ("Google", "https://aistudio.google.com/apikey"),
+             "groq": ("Groq", "https://console.groq.com/keys")}
+OLLAMA_DOWNLOAD = "https://ollama.com/download"
+
+
+def save_settings(updates):
+    """
+    Write KEY=value pairs into the .env file of the repository (created when missing, other lines
+    kept) and apply them to the running process, so the new setting works at once. The file is
+    ignored by git; a key typed in the app lives only there.
+    """
+    lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
+    for key, value in updates.items():
+        value = str(value).strip().replace("\n", "").replace("\r", "")
+        for i, line in enumerate(lines):
+            if line.split("=", 1)[0].strip() == key:
+                lines[i] = f"{key}={value}"
+                break
+        else:
+            lines.append(f"{key}={value}")
+        os.environ[key] = value
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def validate_key(provider, key):
+    """Ask the provider whether the key is accepted (a list-models call, nothing is generated): (ok, message)."""
+    key = key.strip()
+    try:
+        if provider == "gemini":
+            r = requests.get(f"{GEMINI_URL}/models", params={"key": key, "pageSize": 1}, timeout=15)
+        else:
+            r = requests.get(f"{GROQ_URL}/models", headers={"Authorization": f"Bearer {key}"}, timeout=15)
+    except requests.RequestException:
+        return False, "Could not reach the service. Check the internet connection and try again."
+    if r.status_code == 200:
+        return True, "Key accepted."
+    if r.status_code in (400, 401, 403):
+        return False, "The service did not accept this key. Copy it again from the key page, without spaces."
+    if r.status_code == 429:
+        return True, "Key accepted (the service is rate-limiting right now, it will answer shortly)."
+    return False, f"The service answered {r.status_code}. Try again in a moment."
+
+
+def ollama_state(cfg):
+    """'no_server' (Ollama not installed or not running), 'no_model' (running, model not downloaded) or 'ready'."""
+    try:
+        r = requests.get(f"{cfg['ollama_url']}/api/tags", timeout=3)
+        r.raise_for_status()
+        names = [m.get("name", "") for m in r.json().get("models", [])]
+    except requests.RequestException:
+        return "no_server"
+    wanted = cfg["model"] if ":" in cfg["model"] else f"{cfg['model']}:latest"
+    return "ready" if wanted in names or cfg["model"] in names else "no_model"
+
+
+def pull_model(cfg):
+    """Download the model through the local Ollama server; yields (status text, fraction done or None)."""
+    body = {"model": cfg["model"], "stream": True}
+    with requests.post(f"{cfg['ollama_url']}/api/pull", json=body, stream=True, timeout=(10, 600)) as r:
+        r.raise_for_status()
+        for raw in r.iter_lines(decode_unicode=True):
+            if not raw:
+                continue
+            chunk = json.loads(raw)
+            if "error" in chunk:
+                raise RuntimeError(chunk["error"])
+            total, done = chunk.get("total"), chunk.get("completed")
+            yield chunk.get("status", ""), (done / total if total and done is not None else None)
+
+
+# ---------------------------------------------------------------------------
 # Calling the model (streaming)
 # ---------------------------------------------------------------------------
 
