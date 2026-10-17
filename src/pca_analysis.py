@@ -98,7 +98,7 @@ for _, r in gdf_vis.iterrows():
                      "properties": {"id": r["id"], "popup": popup_html}})
 
 m = folium.Map([gdf_vis.geometry.centroid.y.mean(), gdf_vis.geometry.centroid.x.mean()],
-               zoom_start=11, tiles="CartoDB positron")
+               zoom_start=11, tiles="OpenStreetMap")
 folium.GeoJson({"type": "FeatureCollection", "features": features},
                tooltip=folium.GeoJsonTooltip(fields=["id"], aliases=["ID:"]),
                popup=folium.GeoJsonPopup(fields=["popup"], labels=False, max_width=350)).add_to(m)

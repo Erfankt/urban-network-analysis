@@ -16,6 +16,9 @@ __pycache__/
 *.shp.xml
 # ArcGIS metadata written next to the input layers
 data/**/*.xml
+# layers uploaded in the web app
+data/**/*.gpkg
+data/**/*.geojson
 
 # Web app: the assistant's keys and settings
 .env

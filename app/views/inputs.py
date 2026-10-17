@@ -33,6 +33,41 @@ def _path_picker(label, found, current, key):
     return choice
 
 
+def _save_upload(kind, key):
+    """Button callback: save the uploaded files into data/ and select them in the picker (runs before the rerun)."""
+    files = st.session_state.get(f"{key}_upload") or []
+    try:
+        path, message = pl.save_uploaded_layer(kind, [(f.name, f.getvalue()) for f in files])
+    except ValueError as e:
+        st.session_state["upload_msg"] = ("error", str(e))
+        return
+    st.session_state.setdefault("paths", {})[kind] = path
+    st.session_state[f"{key}_choice"] = path
+    st.session_state["upload_msg"] = ("success", message + " It is selected above: check the inputs to continue.")
+    st.session_state.run["inputs"] = None
+
+
+def _uploads():
+    """Upload a layer from the computer; it is copied into data/ and then behaves like any other layer."""
+    with st.expander("Use a layer from your computer"):
+        st.markdown(
+            "**Upload** the parts of a shapefile together (select the `.shp`, `.shx`, `.dbf` and `.prj` files at once), "
+            "one `.zip` holding a shapefile, or a `.gpkg` / `.geojson`. The files are copied into `data/streetnetwork/` "
+            "or `data/neighborhoods/` on this computer. For a big layer you can instead choose **Other path…** in the "
+            "dropdown above and type its location, for example `C:\\Users\\you\\Documents\\streets.shp`; nothing is copied then.")
+        c1, c2 = st.columns(2)
+        for col, kind, key, label in ((c1, "streets", "streets", "Street centerlines"),
+                                      (c2, "neighborhoods", "nbhd", "Neighborhoods")):
+            with col:
+                files = st.file_uploader(label, accept_multiple_files=True, key=f"{key}_upload",
+                                         type=["shp", "shx", "dbf", "prj", "cpg", "sbn", "sbx", "qix", "zip", "gpkg", "geojson"])
+                st.button(f"Save the {label.lower()} layer", key=f"{key}_save", disabled=not files,
+                          on_click=_save_upload, args=(kind, key))
+        msg = st.session_state.pop("upload_msg", None)
+        if msg:
+            (st.success if msg[0] == "success" else st.error)(msg[1])
+
+
 def _record(streets, nbhd, info):
     return {"streets_path": streets, "neighborhoods_path": nbhd, "summary": info["summary"],
             "note": info["note"], "n_neighborhoods": info["n_neighborhoods"],
@@ -82,6 +117,7 @@ def render():
     with c2:
         nbhd = _path_picker("Neighborhoods (.shp)", found["neighborhoods"], paths["neighborhoods"], "nbhd")
     paths.update(streets=streets, neighborhoods=nbhd)
+    _uploads()
 
     run = st.session_state.run
     if st.button("Check the inputs", type="primary", disabled=not (streets and nbhd)):

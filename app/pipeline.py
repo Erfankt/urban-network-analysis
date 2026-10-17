@@ -50,13 +50,88 @@ STAGE1_FAILED = "An error occurred during processing"
 # Inputs
 # ===========================================================================
 
+LAYER_DIRS = {"streets": "streetnetwork", "neighborhoods": "neighborhoods"}
+LAYER_SUFFIXES = (".shp", ".gpkg", ".geojson")
+SHAPEFILE_PARTS = (".shp", ".shx", ".dbf", ".prj", ".cpg", ".sbn", ".sbx", ".qix")
+
+
 def discover_shapefiles():
-    """The shapefiles under data/streetnetwork and data/neighborhoods, as paths relative to src/."""
+    """The layers under data/streetnetwork and data/neighborhoods (.shp, .gpkg, .geojson), as paths relative to src/."""
     found = {"streets": [], "neighborhoods": []}
-    for key, folder in (("streets", DATA_DIR / "streetnetwork"), ("neighborhoods", DATA_DIR / "neighborhoods")):
+    for key, name in LAYER_DIRS.items():
+        folder = DATA_DIR / name
         if folder.is_dir():
-            found[key] = [f"../data/{folder.name}/{p.name}" for p in sorted(folder.glob("*.shp"))]
+            found[key] = [f"../data/{name}/{p.name}" for p in sorted(folder.iterdir())
+                          if p.suffix.lower() in LAYER_SUFFIXES]
     return found
+
+
+def _safe_name(name):
+    """A file name without folders or odd characters (uploads are written under data/ only)."""
+    name = Path(str(name).replace("\\", "/")).name
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+
+
+def save_uploaded_layer(kind, uploads):
+    """
+    Save a layer the user uploaded into data/streetnetwork/ or data/neighborhoods/, so it appears in the pickers.
+
+    `uploads` is a list of (file name, bytes): the parts of one shapefile (.shp .shx .dbf .prj ...), a single .zip
+    holding one shapefile, or a single .gpkg / .geojson. Returns (path relative to src/, message). Raises ValueError
+    with a plain explanation when the files cannot be used. An existing layer with the same name is replaced.
+    """
+    folder = DATA_DIR / LAYER_DIRS[kind]
+    files = {}
+    for name, data in uploads:
+        name = _safe_name(name)
+        if name.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as z:
+                    for member in z.namelist():
+                        base = _safe_name(member)
+                        if not member.endswith("/") and Path(base).suffix.lower() in SHAPEFILE_PARTS + (".gpkg", ".geojson") \
+                                and not base.startswith("."):
+                            files[base] = z.read(member)
+            except zipfile.BadZipFile:
+                raise ValueError(f"{name} is not a valid zip file.")
+        else:
+            files[name] = data
+    if not files:
+        raise ValueError("No files were uploaded.")
+
+    single = [n for n in files if Path(n).suffix.lower() in (".gpkg", ".geojson")]
+    shp = [n for n in files if n.lower().endswith(".shp")]
+    if single and shp:
+        raise ValueError("Upload either one shapefile (its parts together) or one .gpkg/.geojson, not both.")
+    if single:
+        if len(single) > 1:
+            raise ValueError("Upload one .gpkg or .geojson at a time.")
+        keep, main = [single[0]], single[0]
+    else:
+        if len(shp) != 1:
+            raise ValueError("Upload exactly one shapefile: select its .shp and the other parts with the same name "
+                             "(.shx, .dbf, .prj), or one .zip holding them." if not shp else
+                             "Several shapefiles were found; upload one at a time.")
+        stem = Path(shp[0]).stem
+        keep = [n for n in files if Path(n).stem == stem and Path(n).suffix.lower() in SHAPEFILE_PARTS]
+        have = {Path(n).suffix.lower() for n in keep}
+        missing = [e for e in (".dbf",) if e not in have]
+        if missing:
+            raise ValueError(f"The shapefile {shp[0]} needs its {', '.join(missing)} file as well.")
+        main = shp[0]
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = Path(main).stem
+    for old in folder.iterdir():                     # replace the previous copy completely (no stale .cpg/.sbn)
+        if old.stem == stem and old.suffix.lower() in SHAPEFILE_PARTS + (".gpkg", ".geojson"):
+            old.unlink()
+    for n in keep:
+        (folder / n).write_bytes(files[n])
+    note = ""
+    if not main.lower().endswith((".gpkg", ".geojson")):
+        have = {Path(n).suffix.lower() for n in keep}
+        if ".prj" not in have:
+            note = " No .prj file came with it, so the coordinate system is unknown; the check will say so."
+    return f"../data/{LAYER_DIRS[kind]}/{main}", f"Saved {main} ({len(keep)} file{'s' if len(keep) > 1 else ''}) in data/{LAYER_DIRS[kind]}/.{note}"
 
 
 def load_inputs(streets_path, neighborhoods_path):
@@ -90,7 +165,7 @@ def neighborhoods_map_html(neighborhoods, popup_vars=("id",)):
         features.append({"type": "Feature", "geometry": r.geometry.__geo_interface__,
                          "properties": {"id": r["id"], "popup": popup_html}})
     m = folium.Map([gdf_vis.geometry.centroid.y.mean(), gdf_vis.geometry.centroid.x.mean()],
-                   zoom_start=11, tiles="CartoDB positron")
+                   zoom_start=11, tiles="OpenStreetMap")
     folium.GeoJson({"type": "FeatureCollection", "features": features},
                    tooltip=folium.GeoJsonTooltip(fields=["id"], aliases=["ID:"]),
                    popup=folium.GeoJsonPopup(fields=["popup"], labels=False, max_width=350)).add_to(m)
