@@ -1,0 +1,412 @@
+"""
+The only module of the app that talks to src/: it loads and checks the inputs, starts and
+watches the stage-1 process, runs the stage-2 computations and writes the final dataset.
+The pages call these functions and render what they return; nothing here prints, prompts
+or imports Streamlit, so it can be tested from a plain Python session.
+
+Everything goes through the same functions as the terminal scripts, from the same working
+directory (src/), so a run made from the app leaves the same files in the same places:
+data/final_dataset/, data/checkpoints/ and output/pca_diagnostics/.
+"""
+import io, json, os, re, subprocess, sys, time, zipfile
+from pathlib import Path
+
+APP_DIR = Path(__file__).resolve().parent
+REPO_DIR = APP_DIR.parent
+SRC_DIR = REPO_DIR / "src"
+DATA_DIR = REPO_DIR / "data"
+FINAL_DIR = DATA_DIR / "final_dataset"
+OUT_DIR = REPO_DIR / "output" / "pca_diagnostics"
+APP_OUT_DIR = REPO_DIR / "output" / "app"           # the stage-1 log and run record
+STAGE1_LOG = APP_OUT_DIR / "stage1.log"
+STAGE1_RUN = APP_OUT_DIR / "stage1_run.json"
+
+# The src modules address data/ and output/ relative to src/ (../data/...), exactly as the
+# terminal scripts do, so the app works from src/ as well.
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+os.chdir(SRC_DIR)
+
+import matplotlib
+matplotlib.use("Agg")                                 # figures are rendered to images, never to windows
+import matplotlib.pyplot as plt
+import numpy as np, pandas as pd, geopandas as gpd, seaborn as sns, folium, psutil
+
+from run_analysis import DEFAULTS
+from user_inputs import (inspect_inputs, parse_buffers, numeric_columns, save_selection, load_selection,
+                         update_selection, selection_summary, PCA_METHODS, SELECTION_PATH)
+from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS
+from common import (missing_summary, overview_stats, rules_of_thumb_text, correlation_figure, scree_figure,
+                    fit_solution, unrotated_loadings_figure, rotated_loadings_figure, solution_summary_text,
+                    component_candidates, candidate_text, FigureSaver)
+from final_dataset import assemble_final_dataset, write_final_dataset
+
+MEASURES_PATH = FINAL_DIR / "extracted_measures.shp"
+STAGE1_DONE = "Network Processing Complete"           # printed by run_analysis.py at the end
+STAGE1_FAILED = "An error occurred during processing"
+
+
+# ===========================================================================
+# Inputs
+# ===========================================================================
+
+def discover_shapefiles():
+    """The shapefiles under data/streetnetwork and data/neighborhoods, as paths relative to src/."""
+    found = {"streets": [], "neighborhoods": []}
+    for key, folder in (("streets", DATA_DIR / "streetnetwork"), ("neighborhoods", DATA_DIR / "neighborhoods")):
+        if folder.is_dir():
+            found[key] = [f"../data/{folder.name}/{p.name}" for p in sorted(folder.glob("*.shp"))]
+    return found
+
+
+def load_inputs(streets_path, neighborhoods_path):
+    """
+    Load and check the two layers (user_inputs.inspect_inputs) and add what the pages need:
+    counts, the numeric columns a variable can be chosen from, and their summary statistics.
+    Raises when a file cannot be read. When `problems` is not empty, the rest is unset.
+    """
+    info = inspect_inputs(str(streets_path), str(neighborhoods_path))
+    info["streets_path"], info["neighborhoods_path"] = str(streets_path), str(neighborhoods_path)
+    if info["problems"]:
+        return info
+    nb = info["neighborhoods"]
+    info["n_segments"] = int(len(info["edges"]))
+    info["n_neighborhoods"] = int(len(nb))
+    info["columns"] = numeric_columns(nb)
+    info["column_stats"] = nb[info["columns"]].describe().T if info["columns"] else pd.DataFrame()
+    return info
+
+
+def neighborhoods_map_html(neighborhoods, popup_vars=("id",)):
+    """An interactive map of the neighborhood polygons (folium), as HTML; same style as stage 2's map."""
+    gdf_vis = neighborhoods.to_crs(4326)
+
+    def fmt(v):
+        return f"{v:.2f}" if isinstance(v, (float, int)) and pd.notna(v) else v
+
+    features = []
+    for _, r in gdf_vis.iterrows():
+        popup_html = "<br>".join(f"{v}: {fmt(r.get(v, 'NA'))}" for v in popup_vars)
+        features.append({"type": "Feature", "geometry": r.geometry.__geo_interface__,
+                         "properties": {"id": r["id"], "popup": popup_html}})
+    m = folium.Map([gdf_vis.geometry.centroid.y.mean(), gdf_vis.geometry.centroid.x.mean()],
+                   zoom_start=11, tiles="CartoDB positron")
+    folium.GeoJson({"type": "FeatureCollection", "features": features},
+                   tooltip=folium.GeoJsonTooltip(fields=["id"], aliases=["ID:"]),
+                   popup=folium.GeoJsonPopup(fields=["popup"], labels=False, max_width=350)).add_to(m)
+    return m.get_root().render()
+
+
+def buffer_codes(buffers):
+    return {b: StreetNetworkProcessor.buffer_code(b) for b in buffers}
+
+
+# ===========================================================================
+# Stage 1: run_analysis.py as a background process, watched through its log and checkpoints
+# ===========================================================================
+
+def stage1_command(sel, recompute=False):
+    """The run_analysis.py command line that answers every prompt up front."""
+    cmd = [sys.executable, "run_analysis.py",
+           "--streets", sel["streets_path"], "--neighborhoods", sel["neighborhoods_path"],
+           "--buffers", ",".join(str(b) for b in sel["buffer_list_mile"]),
+           "--crime", sel["crime_col"], "--controls", ",".join(sel["ctrl_vars"])]
+    if recompute:
+        cmd.append("--recompute")
+    return cmd
+
+
+def start_stage1(sel, recompute=False, n_neighborhoods=None):
+    """
+    Record the selection (the same user_selection.json the terminal writes) and start
+    run_analysis.py in the background, its output going to output/app/stage1.log. Returns the
+    run record, which is also kept in output/app/stage1_run.json so the page finds the run
+    again after a browser refresh.
+    """
+    if stage1_status()["state"] == "running":
+        raise RuntimeError("a stage-1 run is already in progress")
+    save_selection(sel)
+    APP_OUT_DIR.mkdir(parents=True, exist_ok=True)
+    cmd = stage1_command(sel, recompute)
+    log = open(STAGE1_LOG, "w", encoding="utf-8")
+    env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+    proc = subprocess.Popen(cmd, cwd=SRC_DIR, stdout=log, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, env=env)
+    log.close()
+    try:
+        created = psutil.Process(proc.pid).create_time()
+    except psutil.Error:
+        created = time.time()
+    run = {"pid": proc.pid, "create_time": created, "started": time.time(), "command": cmd,
+           "selection": sel, "recompute": recompute, "log": str(STAGE1_LOG),
+           "n_neighborhoods": int(n_neighborhoods) if n_neighborhoods else None}
+    with open(STAGE1_RUN, "w", encoding="utf-8") as f:
+        json.dump(run, f, indent=2)
+    return run
+
+
+def _process_of(run):
+    """The psutil.Process of a run record, or None when it has ended (guarding against pid reuse)."""
+    try:
+        p = psutil.Process(run["pid"])
+        if abs(p.create_time() - run["create_time"]) > 2 or p.status() == psutil.STATUS_ZOMBIE:
+            return None
+        return p
+    except psutil.Error:
+        return None
+
+
+def read_log(max_chars=200_000):
+    if not STAGE1_LOG.exists():
+        return ""
+    with open(STAGE1_LOG, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    return text[-max_chars:]
+
+
+def log_lines(text, n=25):
+    """
+    The last n lines of the log, with the progress-bar updates collapsed: only the latest state
+    of each buffer's bar is kept (tqdm writes one update per line when the output is a file).
+    """
+    lines = []
+    for raw in text.splitlines():
+        line = raw.split("\r")[-1].rstrip()
+        if not line:
+            continue
+        m = re.match(r"(Analyzing NPAs \([^)]*\))", line)
+        if m and lines and lines[-1].startswith(m.group(1)):
+            lines[-1] = line
+        else:
+            lines.append(line)
+    return lines[-n:]
+
+
+def _checkpoint_dir_from_log(text):
+    m = re.findall(r"^Checkpoints: (.+)$", text, flags=re.M)
+    return Path(m[-1].strip()) if m else None
+
+
+def _rows_in_checkpoint(path):
+    """Neighborhoods already measured in one checkpoint CSV (its data rows)."""
+    try:
+        with open(path, "rb") as f:
+            n = sum(1 for _ in f)
+        return max(n - 1, 0)
+    except OSError:
+        return 0
+
+
+def stage1_progress(run, text):
+    """Per buffer: (neighborhoods done, total), read from the checkpoint CSVs named in the log."""
+    sel = run["selection"]
+    total = run.get("n_neighborhoods") or 0
+    ckpt = _checkpoint_dir_from_log(text)
+    progress = {}
+    for b in sel["buffer_list_mile"]:
+        done = 0
+        if ckpt is not None:
+            done = _rows_in_checkpoint(ckpt / f"measures_{StreetNetworkProcessor.buffer_code(b)}.csv")
+        progress[b] = (min(done, total) if total else done, total)
+    return progress, ckpt
+
+
+def stage1_status():
+    """
+    Where stage 1 stands: a dict with
+      state     : 'none' (never started), 'running', 'finished', 'failed' or 'stopped' (ended without finishing)
+      run       : the run record (None when state is 'none')
+      progress  : {buffer: (done, total)}
+      log_tail  : the last lines of the log
+      elapsed   : seconds since the start
+    """
+    if not STAGE1_RUN.exists():
+        return {"state": "none", "run": None, "progress": {}, "log_tail": [], "elapsed": 0, "checkpoint_dir": None}
+    with open(STAGE1_RUN, encoding="utf-8") as f:
+        run = json.load(f)
+    text = read_log()
+    alive = _process_of(run) is not None
+    if alive:
+        state = "running"
+    elif STAGE1_DONE in text:
+        state = "finished"
+    elif STAGE1_FAILED in text or "Traceback" in text:
+        state = "failed"
+    else:
+        state = "stopped"
+    progress, ckpt = stage1_progress(run, text)
+    end = time.time() if alive else (STAGE1_LOG.stat().st_mtime if STAGE1_LOG.exists() else run["started"])
+    return {"state": state, "run": run, "progress": progress, "log_tail": log_lines(text),
+            "elapsed": max(end - run["started"], 0), "checkpoint_dir": str(ckpt) if ckpt else None}
+
+
+def stop_stage1():
+    """End the running process. The checkpoints keep what was measured; a resume continues from there."""
+    status = stage1_status()
+    p = _process_of(status["run"]) if status["run"] else None
+    if p is not None:
+        p.terminate()
+        try:
+            p.wait(timeout=10)
+        except psutil.TimeoutExpired:
+            p.kill()
+    return status
+
+
+def measures_available():
+    """True when extracted_measures.shp exists and matches the saved selection (its columns are there)."""
+    if not MEASURES_PATH.exists() or not Path(SELECTION_PATH).exists():
+        return False
+    try:
+        sel = load_selection()
+        cols = set(gpd.read_file(MEASURES_PATH, rows=1).columns)
+    except Exception:
+        return False
+    needed = set(StreetNetworkProcessor.measure_columns(sel["buffer_list_mile"])) | set(sel["ctrl_vars"]) | {sel["crime_col"]}
+    return needed <= cols
+
+
+# ===========================================================================
+# Stage 2: component analysis (in-process; the same functions as pca_analysis.py)
+# ===========================================================================
+
+def load_measures():
+    """extracted_measures.shp with the saved selection. Returns (gdf, selection, network_columns)."""
+    sel = load_selection()
+    gdf = gpd.read_file(MEASURES_PATH)
+    net = StreetNetworkProcessor.measure_columns(sel["buffer_list_mile"])
+    missing_cols = [c for c in net + sel["ctrl_vars"] + [sel["crime_col"]] if c not in gdf.columns]
+    if missing_cols:
+        raise ValueError(f"columns missing from extracted_measures.shp: {missing_cols}; run stage 1 again")
+    return gdf, sel, net
+
+
+def measures_mtime():
+    return MEASURES_PATH.stat().st_mtime if MEASURES_PATH.exists() else 0
+
+
+def check_missing(gdf, net, ctrl_vars):
+    return missing_summary(gdf, net, ctrl_vars)
+
+
+def block_overview(gdf, variables):
+    return overview_stats(gdf, variables)
+
+
+def block_solution(gdf, variables, n, method, rotation="varimax"):
+    return fit_solution(gdf, variables, n, rotation=rotation, method=method)
+
+
+def figure_png(fig, dpi=110):
+    """Render a matplotlib figure to PNG bytes and close it."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return buf.getvalue()
+
+
+def overview_pngs(stats, label):
+    return {"correlation": figure_png(correlation_figure(stats, label)),
+            "scree": figure_png(scree_figure(stats, label))}
+
+
+def solution_pngs(report):
+    return {"unrotated": figure_png(unrotated_loadings_figure(report)),
+            "rotated": figure_png(rotated_loadings_figure(report))}
+
+
+def distribution_figure(gdf, col):
+    """The per-variable figure of stage 2: histogram, boxplot, boxplot with observations."""
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    sns.histplot(gdf[col].dropna(), kde=True, ax=axes[0])
+    axes[0].set_title(f"{col}  (skew = {gdf[col].skew():.2f})")
+    sns.boxplot(x=gdf[col], ax=axes[1])
+    axes[1].set_title("boxplot")
+    sns.boxplot(x=gdf[col], ax=axes[2])
+    sns.stripplot(x=gdf[col], color="black", jitter=True, alpha=0.6, ax=axes[2])
+    axes[2].set_title("boxplot with observations")
+    fig.tight_layout()
+    return fig
+
+
+def candidates_for(report, component, exclude=(), top_k=5):
+    return component_candidates(report, component, exclude=exclude, top_k=top_k)
+
+
+# ===========================================================================
+# Final dataset
+# ===========================================================================
+
+def build_final_dataset(gdf, sel, method, rotation, net_report, ctrl_report, representatives,
+                        distribution_plots=True, progress=None):
+    """
+    Write the final dataset, its dictionary, the choices and the diagnostics figures, exactly
+    as pca_analysis.py does at the end of a terminal run. `progress(fraction, message)` is
+    called along the way when given. Returns a dict with the paths and the dictionary.
+    """
+    def tick(frac, msg):
+        if progress:
+            progress(frac, msg)
+
+    tick(0.05, "recording the choices")
+    update_selection(pca_method=method, pca_rotation=rotation,
+                     pca_factors_network=net_report["n_factors"], pca_factors_ctrl=ctrl_report["n_factors"],
+                     network_representatives=list(representatives))
+
+    tick(0.15, "assembling the final dataset")
+    final_gdf, dictionary = assemble_final_dataset(gdf, sel["crime_col"], list(representatives), net_report, ctrl_report)
+    shp, csv, dic = write_final_dataset(final_gdf, dictionary)
+
+    tick(0.35, "saving the component-analysis figures")
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    net_vars, ctrl_vars = list(net_report["rotated_loadings"].index), list(ctrl_report["rotated_loadings"].index)
+    plt.close("all")
+    saver = FigureSaver(OUT_DIR, show=False)            # same file names and numbering as the terminal run
+    for stage, label, variables, report in (("network", "street network", net_vars, net_report),
+                                            ("controls", "socio-spatial controls", ctrl_vars, ctrl_report)):
+        saver.stage = stage
+        stats = overview_stats(gdf, variables)
+        for make in (lambda: correlation_figure(stats, label), lambda: scree_figure(stats, label),
+                     lambda: unrotated_loadings_figure(report), lambda: rotated_loadings_figure(report)):
+            make()
+            saver.save_open_figures()
+            plt.close("all")
+
+    tick(0.6, "saving the neighborhood map")
+    popup_vars = ["id"] + net_vars + ctrl_vars
+    with open(OUT_DIR / "neighborhood_map.html", "w", encoding="utf-8") as f:
+        f.write(neighborhoods_map_html(gdf, popup_vars))
+
+    if distribution_plots:
+        cols = list(gdf[net_vars + ctrl_vars].select_dtypes(include="number").columns)
+        for i, col in enumerate(cols):
+            tick(0.6 + 0.4 * i / max(len(cols), 1), f"distribution figure {i + 1} of {len(cols)}: {col}")
+            fig = distribution_figure(gdf, col)
+            fig.savefig(OUT_DIR / f"dist_{FigureSaver.slug(col)}.png", dpi=110)
+            plt.close(fig)
+
+    tick(1.0, "done")
+    return {"shp": shp, "csv": csv, "dictionary_path": dic, "dictionary": dictionary,
+            "final": final_gdf, "selection_path": SELECTION_PATH, "figures_dir": str(OUT_DIR)}
+
+
+def final_outputs():
+    """The final-dataset files on disk (None for a missing one) and the saved selection."""
+    paths = {"shp": FINAL_DIR / "final_dataset.shp", "csv": FINAL_DIR / "final_dataset.csv",
+             "dictionary": FINAL_DIR / "final_dataset_dictionary.csv", "selection": Path(SELECTION_PATH).resolve()}
+    present = {k: (p if p.exists() else None) for k, p in paths.items()}
+    sel = None
+    if present["selection"]:
+        with open(present["selection"], encoding="utf-8") as f:
+            sel = json.load(f)
+    return present, sel
+
+
+def shapefile_zip(stem="final_dataset"):
+    """The shapefile and its sidecar files as one zip (bytes), for a download button."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(FINAL_DIR.glob(f"{stem}.*")):
+            if p.suffix.lower() in (".shp", ".shx", ".dbf", ".prj", ".cpg"):
+                z.write(p, p.name)
+    return buf.getvalue()

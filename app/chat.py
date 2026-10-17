@@ -1,0 +1,270 @@
+"""
+The chatbot behind the chat panel: which model answers, how it is called, and what it is
+told about the run in progress.
+
+Provider and model come from a .env file in the repository folder (see .env.example) or from
+environment variables. Nothing is required: without any setting the app looks for a local
+Ollama server and its llama3.2 model, and works without the chat when there is none.
+
+    LLM_PROVIDER   ollama | gemini | groq   (unset: gemini or groq when its key is set, else ollama)
+    OLLAMA_URL     http://localhost:11434   OLLAMA_MODEL  llama3.2
+    GEMINI_API_KEY                           GEMINI_MODEL  gemini-2.5-flash
+    GROQ_API_KEY                             GROQ_MODEL    llama-3.3-70b-versatile
+
+The three providers are called over plain HTTP (no SDKs), streaming the reply. Every call
+carries a system message made of fixed method notes (what the pipeline computes and what the
+paper chose) and a description of the current run (inputs, stage-1 status, the eigenvalues,
+the solutions inspected, the choices made), so the answers refer to the user's own numbers.
+"""
+import json, os
+from pathlib import Path
+
+import requests
+from dotenv import load_dotenv
+
+REPO_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(REPO_DIR / ".env")
+
+DEFAULT_MODELS = {"ollama": "llama3.2", "gemini": "gemini-2.5-flash", "groq": "llama-3.3-70b-versatile"}
+GROQ_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
+GEMINI_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+HISTORY_TURNS = 8          # how many past messages go with each question
+TIMEOUT = (10, 180)        # connect, read (seconds); a local model on a CPU can be slow
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+def load_config():
+    """The provider to use and how to reach it, from the environment (.env already loaded)."""
+    gemini_key, groq_key = os.getenv("GEMINI_API_KEY", "").strip(), os.getenv("GROQ_API_KEY", "").strip()
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in ("ollama", "gemini", "groq"):
+        provider = "gemini" if gemini_key else "groq" if groq_key else "ollama"
+    cfg = {"provider": provider,
+           "model": os.getenv(f"{provider.upper()}_MODEL", "").strip() or DEFAULT_MODELS[provider],
+           "ollama_url": os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/"),
+           "api_key": gemini_key if provider == "gemini" else groq_key if provider == "groq" else ""}
+    return cfg
+
+
+def check_provider(cfg):
+    """
+    Whether the configured model can answer now: (ok, message). For Ollama this asks the local
+    server for its models; for the cloud providers it only checks that a key is set (the first
+    real call reports anything else).
+    """
+    p = cfg["provider"]
+    if p == "ollama":
+        try:
+            r = requests.get(f"{cfg['ollama_url']}/api/tags", timeout=3)
+            r.raise_for_status()
+            names = [m.get("name", "") for m in r.json().get("models", [])]
+        except requests.RequestException:
+            return False, (f"No Ollama server at {cfg['ollama_url']}. Install it from ollama.com, start it, "
+                           f"run `ollama pull {cfg['model']}` once, then reload this page.")
+        wanted = cfg["model"] if ":" in cfg["model"] else f"{cfg['model']}:latest"
+        if wanted not in names and cfg["model"] not in names:
+            have = ", ".join(n for n in names) or "none"
+            return False, (f"Ollama is running but has no model `{cfg['model']}` (models present: {have}). "
+                           f"Run `ollama pull {cfg['model']}`, or set OLLAMA_MODEL in .env to one you have.")
+        return True, f"Ollama · {cfg['model']} (local, free)"
+    if not cfg["api_key"]:
+        return False, f"{p.capitalize()} is selected but {p.upper()}_API_KEY is not set in .env."
+    return True, f"{p.capitalize()} · {cfg['model']} (your API key)"
+
+
+# ---------------------------------------------------------------------------
+# Calling the model (streaming)
+# ---------------------------------------------------------------------------
+
+def _sse_json(resp):
+    """Yield the JSON objects of a server-sent-events stream (lines starting with 'data: ')."""
+    for raw in resp.iter_lines(decode_unicode=True):
+        if not raw or not raw.startswith("data:"):
+            continue
+        data = raw[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            yield json.loads(data)
+        except json.JSONDecodeError:
+            continue
+
+
+def _stream_ollama(cfg, system, messages):
+    body = {"model": cfg["model"], "stream": True,
+            "messages": [{"role": "system", "content": system}] + messages,
+            "options": {"temperature": 0.2, "num_ctx": 8192}}
+    with requests.post(f"{cfg['ollama_url']}/api/chat", json=body, stream=True, timeout=TIMEOUT) as r:
+        r.raise_for_status()
+        for raw in r.iter_lines(decode_unicode=True):
+            if not raw:
+                continue
+            chunk = json.loads(raw)
+            if "error" in chunk:
+                raise RuntimeError(chunk["error"])
+            text = chunk.get("message", {}).get("content", "")
+            if text:
+                yield text
+            if chunk.get("done"):
+                break
+
+
+def _stream_groq(cfg, system, messages):
+    body = {"model": cfg["model"], "stream": True, "temperature": 0.2,
+            "messages": [{"role": "system", "content": system}] + messages}
+    headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+    with requests.post(f"{GROQ_URL}/chat/completions", json=body, headers=headers,
+                       stream=True, timeout=TIMEOUT) as r:
+        if r.status_code != 200:
+            raise RuntimeError(f"Groq answered {r.status_code}: {r.text[:300]}")
+        for chunk in _sse_json(r):
+            for choice in chunk.get("choices", []):
+                text = choice.get("delta", {}).get("content")
+                if text:
+                    yield text
+
+
+def _stream_gemini(cfg, system, messages):
+    contents = [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
+                for m in messages]
+    body = {"system_instruction": {"parts": [{"text": system}]}, "contents": contents,
+            "generationConfig": {"temperature": 0.2}}
+    url = f"{GEMINI_URL}/models/{cfg['model']}:streamGenerateContent?alt=sse&key={cfg['api_key']}"
+    with requests.post(url, json=body, stream=True, timeout=TIMEOUT) as r:
+        if r.status_code != 200:
+            raise RuntimeError(f"Gemini answered {r.status_code}: {r.text[:300]}")
+        for chunk in _sse_json(r):
+            for cand in chunk.get("candidates", []):
+                for part in cand.get("content", {}).get("parts", []):
+                    if part.get("text"):
+                        yield part["text"]
+
+
+def stream_reply(cfg, system, messages):
+    """Yield the reply to `messages` (the chat history, last one the question) piece by piece."""
+    fn = {"ollama": _stream_ollama, "gemini": _stream_gemini, "groq": _stream_groq}[cfg["provider"]]
+    yield from fn(cfg, system, messages[-HISTORY_TURNS:])
+
+
+# ---------------------------------------------------------------------------
+# What the model is told
+# ---------------------------------------------------------------------------
+
+ROLE = """You are the assistant built into a web app that runs a data pipeline for research on urban \
+street networks and property crime (Kefayat & Thill, 2025, ISPRS IJGI 14(5):200). The user moves \
+through four pages: Inputs, Stage 1 (street-network measures), Stage 2 (component analysis) and \
+Final dataset. You explain the steps, the measures and the diagnostics, and you interpret the numbers \
+of the current run that are given to you below, suggesting choices with your reasons; the user makes \
+every choice by clicking in the pages. You cannot run anything, change files or see anything beyond \
+what is given here. When a number you need is not in the run description, say that it is not available \
+yet and which page produces it. Answer briefly and concretely, in plain language, and quote the \
+numbers you rely on."""
+
+METHOD_NOTES = """METHOD NOTES
+Inputs: a cleaned street centerline layer (projected CRS in US feet; it defines the working CRS) and \
+neighborhood polygons with a unique `id`, a crime-count column and numeric control variables. The \
+neighborhoods are reprojected to the streets CRS when they differ.
+Stage 1 builds the street network (nodes at segment endpoints; degree-2 nodes removed so nodes are \
+intersections and dead ends), buffers each neighborhood by the chosen distances (paper: 0.1, 0.25, \
+0.5, 0.75 and 1.0 miles), keeps the largest connected component of the segments inside each buffer, \
+and measures it with eight metrics: int_den intersection density (nodes of degree >= 3 per acre), \
+st_den street density (street length per acre), nd_deg average node degree, cl_cof average clustering \
+coefficient, shtpth average length-weighted shortest path (miles), bt_cnt average length-weighted \
+betweenness centrality, cl_cnt average closeness centrality, pr_cnt average PageRank. Column names are \
+metric + buffer code: 1 (0.1 mi), 025, 05, 075, 10 (1.0 mi), e.g. int_den075. The measures are \
+checkpointed per neighborhood, so an interrupted run resumes.
+Stage 2 reduces the measures with a component analysis (varimax rotation). Extraction methods: \
+principal (principal components, as the paper describes), minres (minimum-residual factor analysis, \
+what the original computation ran) and ml (maximum likelihood). The overview shows the correlation \
+matrix, the scree plot and all eigenvalues with the cumulative % of variance; rules of thumb: Kaiser \
+(eigenvalues > 1), the elbow of the scree plot, 70/80/90% of variance; interpretability decides in the \
+end. A candidate solution shows rotated loadings; salient loadings are |loading| >= 0.5; a variable \
+salient on two components cross-loads; communality is the share of a variable's variance the solution \
+keeps. One original measure represents each retained network component (highest absolute loading, \
+preferring a smaller cross-loading and a clear meaning); the representatives, not the scores, enter \
+the models after a log(x + 1) transform. The socio-spatial controls get the same treatment and their \
+component scores are the controls.
+The paper (Charlotte, NC, 371 neighborhoods, 16 controls): 4 network components (74.1% of variance \
+with minres) represented by int_den075, cl_cof075, shtpth075 and bt_cnt05; 9 control components. \
+Final dataset columns: id, cent_x/cent_y (centroid, for GWR), the crime count, area_acre (log as the \
+offset of the count models), the representative measures, PC*_net scores (robustness check) and \
+PC*_ctrl scores (controls). The models themselves (NB GLM, SAR/CAR-NB with INLA, GWR-NB) are fitted \
+outside the app."""
+
+
+def _table_text(df, max_rows=12):
+    return df.head(max_rows).round(3).to_string()
+
+
+def describe_run(run, page):
+    """The current run as text for the system message. `run` is the app's run-state dict."""
+    out = [f"CURRENT RUN (the user is on the page: {page})"]
+    inp = run.get("inputs")
+    if inp:
+        out.append(f"Inputs checked: {inp.get('summary', '')}. Numeric columns available: "
+                   f"{', '.join(inp.get('columns', [])) or 'none'}." + (f" Note: {inp['note']}." if inp.get("note") else ""))
+    else:
+        out.append("Inputs: not checked yet (Inputs page).")
+    s1 = run.get("stage1")
+    if s1:
+        sel = s1.get("selection", {})
+        out.append(f"Stage 1: status {s1.get('status', 'unknown')}; buffers {sel.get('buffer_list_mile')}; "
+                   f"dependent variable {sel.get('crime_col')}; controls {sel.get('ctrl_vars')}."
+                   + (f" Progress: {s1['progress']}." if s1.get("progress") else ""))
+    else:
+        out.append("Stage 1: not started.")
+    s2 = run.get("stage2")
+    if s2:
+        out.append(f"Stage 2: extraction method {s2.get('method')}, rotation {s2.get('rotation')}.")
+        for key, name in (("network", "Street-network block"), ("controls", "Socio-spatial controls block")):
+            b = s2.get(key)
+            if not b:
+                continue
+            out.append(f"{name}: {len(b.get('variables', []))} variables.")
+            if b.get("rules"):
+                out.append(f"  Rules of thumb: {b['rules']}")
+            if b.get("table") is not None:
+                out.append("  Eigenvalues (first rows):\n" + _table_text(b["table"]))
+            for n, info in sorted(b.get("inspected", {}).items()):
+                out.append(f"  Inspected {n} components: {info['retained']:.1f}% of variance retained.\n"
+                           + "\n".join("    " + line for line in info["summary"].splitlines()))
+            if b.get("retained"):
+                out.append(f"  RETAINED: {b['retained']} components.")
+            if b.get("candidates"):
+                out.append("  Representative candidates per component (loading; largest loading elsewhere):")
+                for comp, cands in b["candidates"].items():
+                    out.append(f"    {comp}: " + "; ".join(
+                        f"{c['measure']} ({c['loading']:+.2f}; {c['max_elsewhere']:.2f} on {c['where']})"
+                        if c["max_elsewhere"] is not None else f"{c['measure']} ({c['loading']:+.2f})" for c in cands))
+            if b.get("representatives"):
+                out.append(f"  Representatives chosen: {b['representatives']}.")
+    else:
+        out.append("Stage 2: not started.")
+    fin = run.get("final")
+    if fin:
+        out.append(f"Final dataset written: {fin.get('rows')} rows, columns {fin.get('columns')}.")
+    return "\n".join(out)
+
+
+def system_message(run, page):
+    return f"{ROLE}\n\n{METHOD_NOTES}\n\n{describe_run(run, page)}"
+
+
+SUGGESTIONS = {
+    "Inputs": ["What must the two input layers contain?",
+               "Why do the streets have to be in a CRS in feet?",
+               "What does the CRS note mean?"],
+    "Stage 1": ["What do the buffer distances mean, and why five of them?",
+                "Explain the eight measures in one line each.",
+                "Why do the larger buffers take so much longer?"],
+    "Stage 2": ["How many components would you keep for the street-network block, and why?",
+                "Which measure should represent each component?",
+                "What is a cross-loading and does it matter here?",
+                "principal or minres: what is the difference?"],
+    "Final dataset": ["How do I use each column in the models?",
+                      "Why log(x + 1) for the representatives but not for the scores?",
+                      "What is area_acre for?"],
+}
