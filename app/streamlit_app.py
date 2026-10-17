@@ -64,7 +64,6 @@ theme.inject()
 with st.sidebar:
     st.markdown(theme.sidebar_head(), unsafe_allow_html=True)
     stepper_slot = st.empty()
-    st.markdown(f'<div class="facts">Repository<br><code>{pl.REPO_DIR}</code></div>', unsafe_allow_html=True)
 
 # the chat panel stays in view while the long page scrolls
 st.markdown("<style>[data-testid='stColumn']:has(.st-key-chat-panel) "
