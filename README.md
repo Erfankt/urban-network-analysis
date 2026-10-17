@@ -4,9 +4,9 @@ Reproducible data-construction pipeline for the paper
 
 > Kefayat, E., & Thill, J.-C. (2025). *Urban Street Network Configuration and Property Crime: An Empirical Multivariate Case Study.* ISPRS International Journal of Geo-Information, 14(5), 200. https://doi.org/10.3390/ijgi14050200
 
-Starting from a cleaned street centerline layer and a set of neighborhood polygons, the pipeline builds the neighborhood-level street networks, measures their configuration at five nested spatial scales, reduces the measures (and the socio-spatial controls) with a component analysis, and writes a modeling-ready dataset with a data dictionary. The repository ends there: the spatial count models of the paper (negative binomial GLM, SAR-NB and CAR-NB estimated with INLA, GWR-NB) consume this dataset but are fitted outside the repository.
+Starting from a cleaned street centerline layer and a set of neighborhood polygons, the pipeline builds the neighborhood-level street networks, measures their configuration at different nested spatial scales, reduces the measures (and the socio-spatial controls) with a component analysis, and writes a modeling-ready dataset with a data dictionary.
 
-Every input and every analytical choice (input files, buffer distances, dependent variable, control variables, extraction method, number of components, representative measures) is entered interactively at run time, validated, and recorded in `data/final_dataset/user_selection.json`, so the pipeline can be rerun on another city or with other choices without editing code.
+Every input and every analytical choice (input files, buffer distances, dependent variable, control variables, extraction method, number of components, representative measures) is recorded in `data/final_dataset/user_selection.json`.
 
 The pipeline has two front ends over the same code: the terminal scripts described below, and a **web interface** (`app/`, see *Web interface*) that runs the same stages from the browser, with an assistant beside every step that explains the diagnostics and interprets the run's own numbers.
 
@@ -14,22 +14,22 @@ The pipeline has two front ends over the same code: the terminal scripts describ
 
 ```
 data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
-(cleaned street centerline)               (polygons: id, crime count, control variables)
+(cleaned street centerline)               (polygons: id, crime variable, control variables)
             |                                        |
             v                                        v
   1. python run_analysis.py      - input files, buffer distances, dependent variable and
                                    controls (prompts with defaults, or command-line flags)
-                                 - build the network, measure 8 metrics x 5 buffers per neighborhood
+                                 - build the network per neighborhood
                                    (checkpointed in data/checkpoints/: an interrupted run resumes)
                                  -> data/final_dataset/extracted_measures.shp
             |
             v
   2. pca_analysis.ipynb  or  python pca_analysis.py
-                                 - choose the extraction method (prompt)
+                                 - choose the extraction method
                                  - street-network block: overview, inspect candidate solutions,
                                    choose the number of components, choose one representative
-                                   measure per component (prompts)
-                                 - socio-spatial block: overview, inspect, choose (prompts)
+                                   measure per component
+                                 - socio-spatial block: overview, inspect, choose
             |
             v
   3. final dataset               -> data/final_dataset/final_dataset.shp / .csv
@@ -56,7 +56,7 @@ streamlit run app/streamlit_app.py
 
 The first section of the page, **0 · Setup**, checks the Python version, whether `.venv` exists and whether the app runs inside it, and every package of `requirements.txt` with its pinned version. If all is in place it shows a single line ("Python 3.11 · 16 packages in place · running in the virtual environment .venv", with the package table under *Details*) and the page goes straight on to the inputs. If something is missing it shows only the Setup section: the missing or mismatched packages (hover over `scikit-learn` for why it is pinned below 1.6), an optional tick for Jupyter (only the notebook version of stage 2 needs it), and the choice of where to install: a new `.venv`, the existing one, or the Python that runs the app. One button does it, with the pip output shown live. Installing into the running Python carries on by itself; installing into a `.venv` that the app is not running in ends with a **Restart the app** button that starts the app again inside it (same port, same terminal) and reloads the page. The step needs an internet connection and takes a few minutes the first time.
 
-**From the terminal (for the scripts).** Create and fill the environment once; if `.venv` already exists with the requirements installed (the check below tells), skip steps 1 and 3 and only activate it in each new terminal.
+**From the terminal (for the scripts).** Create and fill the environment once.
 
 1. Create the environment (first time only):
 
@@ -87,7 +87,7 @@ To start over, close every terminal and the app that use the environment and del
 
 ## Input data
 
-The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer must be in a projected coordinate reference system in US feet** (e.g. a State Plane zone): the processor converts the buffer distances from miles to feet, street lengths to miles and areas to acres on that assumption. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS is projected and in feet, line and polygon geometries, and an identifier column with a distinct, non-missing value in every polygon. That column is chosen at setup (`id` by default, or `--id-col`); it keys the checkpoints and is kept under its own name in every output table.
+The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer can be in any projected coordinate reference system**, in feet or metres (a State Plane or UTM zone, say): the processor reads the CRS length unit and converts the buffer distances from miles, areas to acres, street density to feet per acre and shortest paths to miles, so the measures do not depend on the unit. A streets layer in latitude/longitude (e.g. EPSG:4326) is moved, together with the neighborhoods, to the UTM zone that fits its extent, and the run says so. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS has a readable length unit (projected, or latitude/longitude, which is moved to UTM), line and polygon geometries, and an identifier column with a distinct, non-missing value in every polygon. That column is chosen at setup (`id` by default, or `--id-col`); it keys the checkpoints and is kept under its own name in every output table.
 
 | File | Content | Requirements |
 |---|---|---|
@@ -274,6 +274,7 @@ Choices made in the paper: five buffers (0.1 to 1.0 mi); a four-component soluti
 |-- src/
 |   |-- run_analysis.py              stage 1 entry point: prompts or flags for the inputs, DEFAULTS
 |   |-- street_network_processor.py  StreetNetworkProcessor: network construction and measures
+|   |-- crs_units.py                 length unit of the working CRS (feet, metres) and lat/lon to UTM
 |   |-- user_inputs.py               prompts, input validation and user_selection.json helpers
 |   |-- common.py                    component analysis: computations and figures (overview_stats, fit_solution, ...) and the terminal workflow (explore_pca, select_representatives, ...)
 |   |-- final_dataset.py             assembly of the final dataset and its data dictionary
