@@ -39,7 +39,24 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
 
 ## Setup
 
-Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder. It is created and filled once: if `.venv` already exists with the requirements installed (the check below tells), skip steps 1 and 3 and only activate it in each new terminal.
+Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder. There are two ways to set it up; the second is only for the terminal scripts.
+
+**From the web interface (the easy way).** You need Python and nothing else. From the repository folder:
+
+```bash
+python -m venv .venv
+```
+
+then activate it (step 2 below), install the one package the interface itself needs, and start it:
+
+```bash
+pip install streamlit
+streamlit run app/streamlit_app.py
+```
+
+The first section of the page, **0 · Setup**, checks the Python version, whether `.venv` exists and whether the app runs inside it, and every package of `requirements.txt` with its pinned version. If all is in place it shows a single line ("Python 3.11 · 16 packages in place · running in the virtual environment .venv", with the package table under *Details*) and the page goes straight on to the inputs. If something is missing it shows only the Setup section: the missing or mismatched packages (hover over `scikit-learn` for why it is pinned below 1.6), an optional tick for Jupyter (only the notebook version of stage 2 needs it), and the choice of where to install: a new `.venv`, the existing one, or the Python that runs the app. One button does it, with the pip output shown live. Installing into the running Python carries on by itself; installing into a `.venv` that the app is not running in ends with a **Restart the app** button that starts the app again inside it (same port, same terminal) and reloads the page. The step needs an internet connection and takes a few minutes the first time.
+
+**From the terminal (for the scripts).** Create and fill the environment once; if `.venv` already exists with the requirements installed (the check below tells), skip steps 1 and 3 and only activate it in each new terminal.
 
 1. Create the environment (first time only):
 
@@ -65,6 +82,8 @@ pip install -r requirements.txt
 ```
 
 To see whether an existing environment is already complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"`: if it prints a version below 1.6 without an error, skip step 3. `requirements.txt` pins `scikit-learn<1.6` because `factor_analyzer` 0.5.x fails with newer scikit-learn releases, so an error such as `check_array() got an unexpected keyword argument 'force_all_finite'` means the script is running outside this environment, with a newer scikit-learn: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment. The last group of `requirements.txt` (Streamlit and three small packages) is only needed for the web interface.
+
+To start over, close every terminal and the app that use the environment and delete the `.venv` folder (`rmdir /s /q .venv` on Windows Command Prompt, `Remove-Item -Recurse -Force .venv` in PowerShell, `rm -rf .venv` on macOS and Linux); nothing else in the repository is touched, and the Setup section of the app (or the steps above) recreates it.
 
 ## Input data
 
@@ -179,7 +198,7 @@ The same three stages from the browser, for users who would rather click than ty
 streamlit run app/streamlit_app.py
 ```
 
-**Shortest start.** The app can set its own environment up. With Python installed, from the repository folder: `python -m venv .venv`, activate it (as in *Setup* above), `pip install streamlit`, then `streamlit run app/streamlit_app.py`. The first section, **0 · Setup**, checks the Python version, the `.venv` and every package of `requirements.txt` with its pinned version (`scikit-learn<1.6`). When all is in place it shows a one-line note and the page goes on; when something is missing it shows what, and a button installs it (into the running environment, or into a new or existing `.venv` after which a **Restart the app** button starts it again inside that environment and the page reloads by itself). Jupyter, needed only for the notebook, is an optional tick.
+**First start.** Section 0 · Setup of the page checks the environment and installs what is missing; see *Setup* above.
 
 The app opens at `http://localhost:8501` and runs entirely on your computer; nothing is uploaded anywhere. The look follows the system's light or dark setting; the app's menu (top right, Settings, Theme) switches it, and the palette is defined in `.streamlit/config.toml`. It is one page with a setup note and four numbered sections that follow the pipeline (the sidebar links to each; a later section says what is missing until the earlier ones are done):
 
