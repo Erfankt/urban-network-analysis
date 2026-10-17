@@ -436,7 +436,9 @@ def log_lines(text, n=25):
         line = raw.split("\r")[-1].rstrip()
         if not line:
             continue
-        m = re.match(r"(Analyzing NPAs \([^)]*\))", line)
+        # a tqdm bar ("Description:  25%|####   | 117/475 [...]") redraws itself: keep one line per bar,
+        # the latest, like a terminal does
+        m = re.match(r"(Analyzing NPAs \([^)]*\))", line) or re.match(r"^(.*?):\s+\d{1,3}%\|", line)
         if m and lines and lines[-1].startswith(m.group(1)):
             lines[-1] = line
         else:
