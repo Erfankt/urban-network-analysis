@@ -41,6 +41,8 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
 
 Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder. There are two ways to set it up; the second is only for the terminal scripts.
 
+**Quickest start (double-click).** Install Python 3.11, then double-click `start_app.bat` (Windows) or `start_app.command` (macOS; Linux: run `./start_app.command`; the first time on macOS/Linux, make it executable with `chmod +x start_app.command`). The launcher creates `.venv` and installs Streamlit the first time, starts the app and opens your browser; the page's **0 · Setup** section installs the rest. Close the launcher window to stop the app. The two routes below do the same by hand.
+
 **From the web interface (the easy way).** You need Python and nothing else. From the repository folder:
 
 ```bash
