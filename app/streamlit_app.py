@@ -49,6 +49,9 @@ if import_error is not None or not setup_env.ready(env):
                          "Installing them again usually fixes it.")
                 env["needs"] = [dict(r, status="reinstall") for r in env["rows"] if not r["optional"]]
             setup_env.render(env)
+            if import_error is not None:
+                st.markdown("If installing again does not help, restart the app:")
+                setup_env.restart_box(sys.executable, "restart_here")
         theme.footer()
     st.stop()
 

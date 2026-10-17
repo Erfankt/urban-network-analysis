@@ -16,6 +16,7 @@ import importlib.metadata as md
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -142,6 +143,82 @@ def install(python, reqs):
 
 
 # ---------------------------------------------------------------------------
+# Restarting the app from its own page
+# ---------------------------------------------------------------------------
+APP_FILE = APP_DIR / "streamlit_app.py"
+
+# The old server may still hold the port for a moment after it ends (the browser's connections to it linger), and a
+# started-too-early Streamlit gives up at once. So the new server is started by a small helper that tries again
+# every 2 seconds until it stays up. On Windows (a running process cannot be replaced) the helper is a new process
+# in the same console; elsewhere it takes over this process, so Ctrl+C in the terminal keeps working either way.
+_WAIT_THEN_RUN = (
+    "import subprocess,sys,time\n"
+    "cmd=sys.argv[2:]; t=time.time(); code=1\n"
+    "while time.time()-t<120:\n"
+    "    t1=time.time(); code=subprocess.call(cmd)\n"
+    "    if time.time()-t1>8 or code==0:\n"
+    "        break\n"
+    "    time.sleep(2)\n"
+    "sys.exit(code)\n")
+
+_RELOAD_JS = """<script>
+const origin = window.parent.location.origin; const t0 = Date.now(); let wentDown = false;
+async function tick() {
+  try {
+    const r = await fetch(origin + '/_stcore/health', {cache: 'no-store'});
+    if (r.ok && (wentDown || Date.now() - t0 > 30000)) { window.parent.location.reload(); return; }
+  } catch (e) { wentDown = true; }
+  setTimeout(tick, 700);
+}
+setTimeout(tick, 1200);
+</script>"""
+
+
+def restart_command_list(python):
+    port = str(st.get_option("server.port") or 8501)
+    return port, [str(python), "-m", "streamlit", "run", str(APP_FILE), "--server.port", port,
+                  "--server.headless", "true"]
+
+
+def restart_app(python):
+    """Start the app again with `python` (same port, same terminal) and end this process."""
+    port, cmd = restart_command_list(python)
+    os.chdir(REPO_DIR)
+    if os.name == "nt":
+        subprocess.Popen([str(python), "-c", _WAIT_THEN_RUN, port, *cmd], cwd=str(REPO_DIR))
+        time.sleep(0.4)
+        os._exit(0)
+    for fd in range(3, 2048):                           # the server's listening socket is inheritable: close it for the new process
+        try:
+            os.set_inheritable(fd, False)
+        except OSError:
+            pass
+    os.execv(str(python), [str(python), "-c", _WAIT_THEN_RUN, port, *cmd])   # takes over this process: same terminal, Ctrl+C works
+
+
+def _reload_when_back():
+    """Page script: wait for the server to go away and come back, then reload this page."""
+    if hasattr(st, "iframe"):
+        st.iframe(_RELOAD_JS, height=1)
+    else:
+        import streamlit.components.v1 as components
+        components.html(_RELOAD_JS, height=1)
+
+
+def restart_box(python, key):
+    """A 'Restart the app' button; the page reloads itself when the new server is up."""
+    if st.session_state.get("restarting"):
+        st.info("Restarting the app… this page reloads by itself in a few seconds.")
+        _reload_when_back()
+        restart_app(python)                             # does not return
+    if st.button("Restart the app", type="primary", key=key):
+        st.session_state["restarting"] = True
+        st.rerun()
+    st.caption("Or stop it yourself (Ctrl+C in the terminal) and start it again with: "
+               f"`{restart_command(VENV_DIR) if python == str(venv_python()) else 'streamlit run app/streamlit_app.py'}`")
+
+
+# ---------------------------------------------------------------------------
 # The page
 # ---------------------------------------------------------------------------
 
@@ -198,6 +275,29 @@ def _table(rows):
             '<th>used for</th></tr>' + "".join(body) + "</table>")
 
 
+def venv_has_everything():
+    """True when the repository's .venv exists and already holds every required package (asked of its own Python)."""
+    if not venv_exists():
+        return False
+    code = ("import importlib.metadata as m,json;"
+            "print(json.dumps({(d.metadata['Name'] or '').lower().replace('_','-'): d.version for d in m.distributions()}))")
+    try:
+        out = subprocess.run([str(venv_python()), "-c", code], capture_output=True, text=True, timeout=40)
+        have = __import__("json").loads(out.stdout.strip().splitlines()[-1])
+    except Exception:
+        return False
+    for r in parse_requirements():
+        if r["optional"]:
+            continue
+        v = have.get(r["name"].lower().replace("_", "-"))
+        if v is None:
+            return False
+        spec = Requirement(r["line"]).specifier
+        if spec and not spec.contains(v, prereleases=True):
+            return False
+    return True
+
+
 def _run_steps(steps, label):
     """Run generator steps with a live log; returns True when every step exited with 0."""
     box = st.empty()
@@ -240,6 +340,12 @@ def render(env):
                            "packages are in place, though a virtual environment keeps them apart from your other projects.")
             st.markdown(_table(env["rows"]), unsafe_allow_html=True)
         return True
+
+    if env["venv_exists"] and not env["in_venv"] and venv_has_everything():
+        st.markdown("The virtual environment `.venv` of this repository already has every package; "
+                    "the app is simply running outside it. Restart it inside `.venv`:")
+        restart_box(str(venv_python()), "restart_venv_ready")
+        return False
 
     st.markdown("Before the pipeline can run, the Python environment needs a few packages. "
                 "This step does it for you; it needs an internet connection and takes a few minutes the first time.")
@@ -294,6 +400,5 @@ def render(env):
         # fall through: on failure the log stays visible
     if st.session_state.get("setup_restart"):
         st.success("The environment is ready. One last step: restart the app inside it.")
-        st.markdown("Stop the app (Ctrl+C in the terminal), then from the repository folder run:")
-        st.code(restart_command(), language="bash")
+        restart_box(str(venv_python()), "restart_venv")
     return False
