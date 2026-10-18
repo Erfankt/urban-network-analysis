@@ -68,8 +68,24 @@ def parse_requirements(path=REQUIREMENTS, python_version=None):
     return reqs
 
 
+_PY_VERSIONS = {}
+
+
 def python_version_of(python):
-    """The 'X.Y.Z' version of an interpreter ('' when it cannot be asked)."""
+    """The 'X.Y.Z' version of an interpreter ('' when it cannot be asked); remembered per file."""
+    try:
+        key = (str(python), os.path.getmtime(python))
+        if key in _PY_VERSIONS:
+            return _PY_VERSIONS[key]
+    except OSError:
+        key = None
+    v = _ask_python_version(python)
+    if key is not None:
+        _PY_VERSIONS[key] = v
+    return v
+
+
+def _ask_python_version(python):
     try:
         if Path(python).resolve() == Path(sys.executable).resolve():
             return platform.python_version()
@@ -376,6 +392,8 @@ def render(env):
 
     st.markdown("Before the pipeline can run, the Python environment needs a few packages. "
                 "This step does it for you; it needs an internet connection and takes a few minutes the first time.")
+    st.caption(f"{env['python']}, running {'inside' if env['in_venv'] else 'outside'} the repository's `.venv` — "
+               f"`{sys.executable}`")
     missing = env["needs"]
     c1, c2, c3 = st.columns(3)
     c1.markdown(f"**1 · Virtual environment**  \n{'✅ `.venv` exists' if env['venv_exists'] else '⬜ not created yet'}")
@@ -393,14 +411,18 @@ def render(env):
         place, python = "the virtual environment this app runs in", sys.executable
         choices = ["here"]
     else:
+        here = f"The Python running this app (Python {platform.python_version()} — {sys.executable})"
         if env["venv_exists"]:
+            vv = python_version_of(venv_python())
             choices = ["venv", "here"]
-            labels = {"venv": "The existing `.venv` of the repository (recommended; the app then needs a restart)",
-                      "here": f"The Python running this app ({sys.executable})"}
+            labels = {"venv": f"The existing `.venv` of the repository{f' (Python {vv})' if vv else ''} "
+                              "(recommended; the app then needs a restart)",
+                      "here": here}
         else:
             choices = ["new", "here"]
-            labels = {"new": "A new virtual environment, `.venv`, in the repository (recommended; the app then needs a restart)",
-                      "here": f"The Python running this app ({sys.executable})"}
+            labels = {"new": f"A new virtual environment, `.venv`, created with Python {platform.python_version()} "
+                             "(recommended; the app then needs a restart)",
+                      "here": here}
     if not env["in_venv"]:
         choice = st.radio("Where should the packages go?", choices, format_func=lambda k: labels[k], key="setup_where")
     else:
