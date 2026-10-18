@@ -82,7 +82,7 @@ def check_provider(cfg):
         return True, f"Ollama · {cfg['model']} (local, free)"
     if not cfg["api_key"]:
         return False, f"{p.capitalize()} is selected but {p.upper()}_API_KEY is not set in .env."
-    return True, f"{p.capitalize()} · {cfg['model']} (your API key)"
+    return True, f"{p.capitalize()} · {cfg['model']}"
 
 
 # ---------------------------------------------------------------------------
