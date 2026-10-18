@@ -86,15 +86,17 @@ def _ollama_tab():
 
 
 def _setup_panel(can_close):
-    st.markdown("**Turn on the assistant**")
-    st.caption("Optional: the whole app works without it. Pick one way to connect a model.")
-    tabs = st.tabs(["Gemini", "Groq", "This computer"])
-    with tabs[0]:
-        _key_tab("gemini")
-    with tabs[1]:
-        _key_tab("groq")
-    with tabs[2]:
-        _ollama_tab()
+    st.markdown("**Turn on the assistant** · optional")
+    st.caption("The assistant explains each step and can look up values in your run; everything else in the "
+               "app works without it. Connecting takes one key, saved on this computer — this panel then "
+               "does not come back.")
+    _key_tab("gemini")
+    with st.expander("Rather not use Google? Two alternatives"):
+        alt = st.tabs(["Groq — another free key", "This computer — no account, slower"])
+        with alt[0]:
+            _key_tab("groq")
+        with alt[1]:
+            _ollama_tab()
     if can_close and st.button("Keep the current model", key="setup_close", type="tertiary"):
         st.session_state.show_setup = False
         st.rerun()

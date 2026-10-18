@@ -24,6 +24,67 @@ if str(APP_DIR) not in sys.path:
 import theme                                           # noqa: E402
 import setup_env                                       # noqa: E402  (standard library and Streamlit only)
 
+# The app stops itself when its browser tab is closed: once no browser has been connected for a
+# short while, the server cleans up and ends (a refresh reconnects within seconds and is not a stop;
+# a stage-1 run in progress is a separate process and continues). KEEP_RUNNING=1 turns this off,
+# e.g. to leave a server running for other devices; Ctrl+C in a terminal still works either way.
+def _exit_when_browser_closes():
+    import os
+    import threading
+
+    if os.environ.get("KEEP_RUNNING") == "1":
+        return
+    try:
+        grace = float(os.environ.get("APP_EXIT_GRACE") or 25)
+    except ValueError:
+        grace = 25.0
+
+    def _sessions():
+        from streamlit import runtime
+        if not runtime.exists():
+            return None                              # no server (tests, bare mode): not our call
+        mgr = getattr(runtime.get_instance(), "_session_mgr", None)
+        return None if mgr is None else int(mgr.num_active_sessions())
+
+    def _watch():
+        seen, idle, never, step = False, 0.0, 0.0, 3.0
+        while True:
+            time.sleep(step)
+            try:
+                n = _sessions()
+            except Exception:
+                return                               # the internal API moved: never end the app by mistake
+            if n is None:
+                continue
+            if n > 0:
+                seen, idle = True, 0.0
+            elif not seen:
+                never += step                        # started but no browser ever connected (it failed to open):
+                if never < 600:                      # a hidden server must not linger forever
+                    continue
+                os._exit(0)
+            else:
+                idle += step
+                if idle >= grace:
+                    pipeline = sys.modules.get("pipeline")
+                    try:
+                        if pipeline is not None:
+                            pipeline.clear_output_dir()
+                    finally:
+                        os._exit(0)
+
+    threading.Thread(target=_watch, daemon=True, name="exit-when-browser-closes").start()
+
+
+@st.cache_resource
+def _watchdog():
+    """Once per server process."""
+    _exit_when_browser_closes()
+    return True
+
+
+_watchdog()
+
 # Stage 0: the environment. Only when it is complete are the heavy packages imported, so that a missing one
 # shows the setup step instead of a traceback.
 theme.inject()
