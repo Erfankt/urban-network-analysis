@@ -26,9 +26,17 @@ def _connected():
 
 def _key_tab(provider):
     company, url = KEY_PAGES[provider]
-    st.caption({"gemini": "The quickest way: a free key takes about a minute and answers are fast and good. ",
-                "groq": "A free key, about a minute, very fast answers. "}[provider]
-               + f"Your questions and a short summary of your run are sent to {company}.")
+    if provider == "gemini":
+        st.markdown("**Connect Google Gemini with your own, free API key** — the recommended way. "
+                    "Press the first button to open Google AI Studio, sign in with any Google account, create "
+                    "a key (about a minute, no payment details), then paste it below. *(Your key is saved only "
+                    "on this computer and is not shared anywhere: it is used solely to send your own questions "
+                    "to Google, and git never uploads it.)*")
+        st.caption(f"When you ask the assistant something, your question and a short summary of your run "
+                   f"are sent to {company}; your layer files are not.")
+    else:
+        st.caption("A free key, about a minute, very fast answers. "
+                   f"Your questions and a short summary of your run are sent to {company}.")
     st.link_button("1 · Get a free key", url, use_container_width=True)
     key = st.text_input("2 · Paste the key here", type="password", key=f"{provider}_key_in",
                         placeholder="paste, then press Enter")
