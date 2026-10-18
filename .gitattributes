@@ -6,6 +6,10 @@
 *.md text eol=lf
 *.txt text eol=lf
 *.ipynb text eol=lf
+*.cff text eol=lf
+# the launchers: cmd.exe wants CRLF, bash wants LF, on every checkout and in GitHub zips
+*.bat text eol=crlf
+*.command text eol=lf
 
 # Geospatial binaries
 *.shp binary

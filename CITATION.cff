@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite the paper it reproduces (preferred-citation
+  below) and, where appropriate, the software itself.
+type: software
+title: "urban-network-analysis: data-construction pipeline for street network configuration and property crime"
+authors:
+  - family-names: Kefayat
+    given-names: Erfan
+repository-code: "https://github.com/Erfankt/urban-network-analysis"
+license: MIT
+version: v2.0
+date-released: "2026-10-17"
+keywords:
+  - street network
+  - urban analytics
+  - property crime
+  - spatial analysis
+  - GIS
+  - principal component analysis
+preferred-citation:
+  type: article
+  title: "Urban Street Network Configuration and Property Crime: An Empirical Multivariate Case Study"
+  authors:
+    - family-names: Kefayat
+      given-names: Erfan
+    - family-names: Thill
+      given-names: Jean-Claude
+  journal: "ISPRS International Journal of Geo-Information"
+  volume: 14
+  issue: 5
+  start: 200
+  year: 2025
+  doi: 10.3390/ijgi14050200
