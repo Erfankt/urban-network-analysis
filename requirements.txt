@@ -9,7 +9,10 @@ tqdm
 
 # Stage 2/3: component analysis and final dataset
 factor_analyzer
-scikit-learn<1.6      # factor_analyzer 0.5.x breaks with scikit-learn >= 1.6
+# factor_analyzer 0.5.x needs scikit-learn's force_all_finite, removed in 1.8; results on 1.5 and 1.7 are identical.
+# Python 3.14+ has no prebuilt scikit-learn<1.6, so it takes the 1.7 line; older Pythons keep the tested baseline.
+scikit-learn<1.6 ; python_version < "3.14"
+scikit-learn>=1.7,<1.8 ; python_version >= "3.14"
 matplotlib
 seaborn
 folium

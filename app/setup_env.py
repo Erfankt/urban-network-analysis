@@ -3,7 +3,7 @@ Stage 0 of the app: is the Python environment ready, and if not, make it ready.
 
 It follows the setup steps of the README: (1) the virtual environment `.venv` in the repository folder
 exists, (2) the app runs inside it, (3) the dependencies of requirements.txt are installed, with the
-versions it pins (scikit-learn < 1.6 for factor_analyzer). When everything is in place the page shows a
+versions it pins (a scikit-learn range per Python version, for factor_analyzer). When everything is in place the page shows a
 one-line "ready" note and goes on; when something is missing it offers to do the missing steps.
 
 This module imports only the standard library, `packaging` (a dependency of Streamlit) and Streamlit,
@@ -14,6 +14,7 @@ import html
 import importlib
 import importlib.metadata as md
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -34,11 +35,18 @@ OPTIONAL_MARKER = "Notebook"            # the requirements.txt group that is onl
 # What is required
 # ---------------------------------------------------------------------------
 
-def parse_requirements(path=REQUIREMENTS):
-    """requirements.txt as a list of {group, name, spec, line, optional}; the group is the comment above a block."""
+def parse_requirements(path=REQUIREMENTS, python_version=None):
+    """
+    requirements.txt as a list of {group, name, spec, line, optional}; the group is the comment above
+    a block. A line with an environment marker (e.g. `; python_version < "3.14"`) is kept only when the
+    marker holds for `python_version` (default: the Python running this app), so each interpreter sees
+    exactly the pins pip would install for it.
+    """
     reqs, group = [], ""
     if not Path(path).exists():
         return reqs
+    pv = (python_version or platform.python_version()).strip()
+    env = {"python_full_version": pv, "python_version": ".".join(pv.split(".")[:2])}
     for raw in Path(path).read_text(encoding="utf-8").splitlines():
         text = raw.strip()
         if not text:
@@ -53,9 +61,23 @@ def parse_requirements(path=REQUIREMENTS):
             r = Requirement(line)
         except Exception:
             continue
+        if r.marker is not None and not r.marker.evaluate(env):
+            continue
         reqs.append({"group": group, "name": r.name, "spec": str(r.specifier), "line": line,
                      "optional": group.startswith(OPTIONAL_MARKER)})
     return reqs
+
+
+def python_version_of(python):
+    """The 'X.Y.Z' version of an interpreter ('' when it cannot be asked)."""
+    try:
+        if Path(python).resolve() == Path(sys.executable).resolve():
+            return platform.python_version()
+        out = subprocess.run([str(python), "-c", "import platform;print(platform.python_version())"],
+                             capture_output=True, text=True, timeout=20)
+        return out.stdout.strip().splitlines()[-1] if out.returncode == 0 and out.stdout.strip() else ""
+    except Exception:
+        return ""
 
 
 def check_packages(reqs=None):
@@ -240,9 +262,11 @@ def summary_line(env):
     return f"{env['python']} · {n} packages in place · running in {where}"
 
 
-TIPS = {"scikit-learn": "<b>Why <code>scikit-learn &lt; 1.6</code>?</b><br><code>factor_analyzer</code> 0.5.x fails with newer "
-                        "scikit-learn releases (an error such as <code>check_array() got an unexpected keyword argument "
-                        "'force_all_finite'</code>), so <code>requirements.txt</code> pins it."}
+TIPS = {"scikit-learn": "<b>Why is scikit-learn pinned?</b><br><code>factor_analyzer</code> 0.5.x uses an interface that "
+                        "scikit-learn 1.8 removed (<code>check_array() got an unexpected keyword argument "
+                        "'force_all_finite'</code>). <code>requirements.txt</code> keeps the tested <code>&lt;1.6</code> "
+                        "up to Python 3.13 and takes <code>1.7</code> on Python 3.14+, which has no prebuilt "
+                        "<code>&lt;1.6</code>; the component-analysis results are identical."}
 
 TABLE_CSS = """<style>
 .pk { width: 100%; border-collapse: collapse; font-size: .88rem; }
@@ -286,7 +310,7 @@ def venv_has_everything():
         have = __import__("json").loads(out.stdout.strip().splitlines()[-1])
     except Exception:
         return False
-    for r in parse_requirements():
+    for r in parse_requirements(python_version=python_version_of(venv_python())):
         if r["optional"]:
             continue
         v = have.get(r["name"].lower().replace("_", "-"))
@@ -318,8 +342,11 @@ def _run_steps(steps, label):
         status.update(label=label + (" — done" if ok else " — failed"), state="complete" if ok else "error")
     box.empty()
     if not ok:
-        st.error("A step failed; the last lines of its output are above. A common cause is no internet connection "
-                 "(the packages are downloaded from pypi.org). Fix it and press the button again.")
+        st.error("A step failed; the last lines of its output are above. Two common causes: no internet connection "
+                 "(the packages come from pypi.org), and a brand-new Python that a package has no prebuilt build for "
+                 "yet -- pip then tries to compile it and stops at a missing compiler (`metadata-generation-failed`). "
+                 "In that case install Python 3.11-3.13 alongside and start the app with it, or wait for the package "
+                 "to catch up. Fix the cause and press the button again.")
     return ok
 
 
@@ -387,7 +414,9 @@ def render(env):
             steps.append(("Create the virtual environment", create_venv()))
         if choice in ("new", "venv"):
             target = str(venv_python())
-            todo = [r for r in parse_requirements() if with_nb or not r["optional"]]   # a fresh .venv has nothing yet
+            pv = python_version_of(target) if choice == "venv" else None   # a new .venv gets this Python's version
+            todo = [r for r in parse_requirements(python_version=pv)
+                    if with_nb or not r["optional"]]                       # a fresh .venv has nothing yet
         steps.append(("Install the packages", install(target, todo)))
         if _run_steps(steps, "Setting up the environment"):
             importlib.invalidate_caches()
