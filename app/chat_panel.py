@@ -28,10 +28,8 @@ def _key_tab(provider):
     company, url = KEY_PAGES[provider]
     if provider == "gemini":
         st.markdown("**Connect Google Gemini with your own, free API key** — the recommended way. "
-                    "Press the first button to open Google AI Studio, sign in with any Google account, create "
-                    "a key (about a minute, no payment details), then paste it below. *(Your key is saved only "
-                    "on this computer and is not shared anywhere: it is used solely to send your own questions "
-                    "to Google, and git never uploads it.)*")
+                    "Press the first button to open Google AI Studio, sign in with any Google account, "
+                    "create a key, then paste it below.")
         st.caption(f"When you ask the assistant something, your question and a short summary of your run "
                    f"are sent to {company}; your layer files are not.")
     else:
