@@ -3,7 +3,7 @@ import time
 import streamlit as st
 
 import pipeline as pl
-from chat import (load_config, check_provider, agent_reply, system_message, SUGGESTIONS, save_settings,
+from chat import (load_config, check_provider, agent_reply, system_message, SUGGESTIONS, save_settings, redact,
                   validate_key, discover_gemini_model, ollama_state, pull_model, KEY_PAGES, OLLAMA_DOWNLOAD, DEFAULT_MODELS)
 
 def provider_status(force=False):
@@ -199,7 +199,7 @@ def render(page):
                                 slot = st.empty()
                         slot.markdown(text)
                     except Exception as e:                       # network, model or key problems
-                        text += f"\n\nThe model could not answer: {e}"
+                        text += f"\n\nThe model could not answer: {redact(e)}"
                         slot.error(text)
                 if text.strip():
                     segments.append({"type": "text", "content": text})

@@ -28,6 +28,16 @@ load_dotenv(REPO_DIR / ".env")
 DEFAULT_MODELS = {"ollama": "llama3.2", "gemini": "gemini-flash-latest", "groq": "llama-3.3-70b-versatile"}
 GROQ_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
 GEMINI_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+
+
+def redact(text):
+    """Error text safe to show or keep: any key that an URL or a provider echo might carry is masked."""
+    out = re.sub(r"(key=)[A-Za-z0-9_\-]{8,}", r"\1[hidden]", str(text))
+    for name in ("GEMINI_API_KEY", "GROQ_API_KEY"):
+        value = os.getenv(name, "").strip()
+        if len(value) >= 8:
+            out = out.replace(value, "[hidden]")
+    return out
 HISTORY_TURNS = 8          # how many past messages go with each question
 TIMEOUT = (10, 180)        # connect, read (seconds); a local model on a CPU can be slow
 
@@ -109,7 +119,8 @@ def validate_key(provider, key):
     key = key.strip()
     try:
         if provider == "gemini":
-            r = requests.get(f"{GEMINI_URL}/models", params={"key": key, "pageSize": 1}, timeout=15)
+            r = requests.get(f"{GEMINI_URL}/models", params={"pageSize": 1},
+                             headers={"x-goog-api-key": key}, timeout=15)
         else:
             r = requests.get(f"{GROQ_URL}/models", headers={"Authorization": f"Bearer {key}"}, timeout=15)
     except requests.RequestException:
@@ -130,10 +141,11 @@ def discover_gemini_model(key, avoid=""):
     """
     names, token = [], None
     for _ in range(6):
-        params = {"key": key.strip(), "pageSize": 100}
+        params = {"pageSize": 100}
         if token:
             params["pageToken"] = token
-        r = requests.get(f"{GEMINI_URL}/models", params=params, timeout=15)
+        r = requests.get(f"{GEMINI_URL}/models", params=params,
+                         headers={"x-goog-api-key": key.strip()}, timeout=15)
         r.raise_for_status()
         data = r.json()
         for m in data.get("models", []):
@@ -279,8 +291,10 @@ def _round_gemini(cfg, system, contents, tools):
     if tools:
         body["tools"] = [{"functionDeclarations": tools}]
     for attempt in (1, 2):
-        url = f"{GEMINI_URL}/models/{cfg['model']}:streamGenerateContent?alt=sse&key={cfg['api_key']}"
-        with requests.post(url, json=body, stream=True, timeout=TIMEOUT) as r:
+        # the key travels in a header, never in the URL: exception messages embed the URL
+        url = f"{GEMINI_URL}/models/{cfg['model']}:streamGenerateContent?alt=sse"
+        with requests.post(url, json=body, stream=True, timeout=TIMEOUT,
+                           headers={"x-goog-api-key": cfg["api_key"]}) as r:
             if r.status_code == 404 and attempt == 1:
                 # the model was retired or renamed: look up one this key can use, remember it, and retry
                 try:

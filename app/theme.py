@@ -129,5 +129,6 @@ def footer():
     st.markdown(
         f'<div class="footer"><b>Cite as</b> {CITATION}<br>'
         f'Code and data construction: <a href="{REPO_URL}" target="_blank" rel="noopener">github.com/Erfankt/'
-        f'urban-network-analysis</a> · The app runs on your computer; your data are not uploaded anywhere.</div>',
+        f'urban-network-analysis</a> · The app and the pipeline run on your computer; your layers stay here. '
+        f'Questions to the assistant (and the small data summaries sent with them) go to the model provider you configure.</div>',
         unsafe_allow_html=True)

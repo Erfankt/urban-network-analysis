@@ -9,7 +9,6 @@ moved to the UTM zone that fits its extent (ensure_projected), because degrees c
 
 For layers in feet the constants are exactly 5280 and 43560, so results do not change.
 """
-import numpy as np
 
 METRES_PER_MILE = 1609.344
 FEET_PER_METRE = 1 / 0.3048

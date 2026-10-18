@@ -207,7 +207,7 @@ The app opens at `http://localhost:8501` and runs entirely on your computer; not
 
 The sections call `app/pipeline.py`, which calls the functions in `src/` from the same working directory as the terminal scripts, so an app run and a terminal run with the same choices write identical files to `data/final_dataset/` and `output/pca_diagnostics/`, including `user_selection.json` and the numbered figures.
 
-**Cleaning up.** When the app shuts down normally (Ctrl+C in the terminal), it empties the `output/` folder: the stage-1 log and run record and the diagnostic figures, which are all regenerated when needed. The folder itself, `data/` (the measures, the checkpoints, the final dataset) and everything else stay; a stage-1 run that is still going keeps its log. Set `KEEP_OUTPUT=1` in the environment to keep `output/` as it is. Closing the terminal window instead of pressing Ctrl+C skips the cleanup.
+**Cleaning up.** When the app shuts down normally (Ctrl+C in the terminal, or closing the launcher window), it removes what it wrote in `output/`: the stage-1 log and run record (`output/app`) and the diagnostic figures made during the session, which are all regenerated when needed. Figures left by earlier *terminal* runs of stage 2 are kept. The folder itself, `data/` (the measures, the checkpoints, the final dataset) and everything else stay; a stage-1 run that is still going keeps its log. Set `KEEP_OUTPUT=1` in the environment to keep `output/` untouched.
 
 **The assistant.** A chat panel beside the page explains the steps, the measures and the diagnostics, and interprets the current run: each question is sent with the method notes (what the pipeline computes and what the paper chose) and a description of the run so far, from the inputs and the stage-1 status to the eigenvalue table, the solutions inspected with their salient loadings, the candidates for the representatives and the choices made. It can suggest how many components to keep or which measure to pick, with its reasons; every choice is still made by clicking in the pages. It can also look things up in your data through a few read-only tools (`app/tools.py`): list the columns, compute the area of every neighborhood, summarize or correlate columns, fetch the values of given neighborhoods; a table it produces appears in the chat with a download button. It cannot run code, change files or choose for you (set `ASSISTANT_TOOLS=0` in `.env` to turn the lookups off). With no model connected, the panel offers three ways to connect one by clicking, with no file to edit: paste a free Gemini or Groq key (the app checks it and keeps it in `.env`), or, for a local model, install Ollama and press the button that downloads the model. The model is free by default: a local [Ollama](https://ollama.com) server with its `llama3.2` model (install Ollama, run `ollama pull llama3.2` once; a few GB of memory, slower without a GPU). A Gemini or Groq API key in a `.env` file switches to that provider instead; copy `.env.example` to `.env` to see the settings. With no model reachable the panel says how to set one up and the rest of the app works as before. Answers from a small local model are a guide to the diagnostics, not a substitute for reading them.
 
@@ -243,19 +243,16 @@ The sections call `app/pipeline.py`, which calls the functions in `src/` from th
 |   `-- pca_analysis.py              stage 2 and 3, script version
 |-- .env.example            settings of the assistant (copy to .env)
 |-- .streamlit/config.toml  display settings of the web app
+|-- start_app.bat           double-click launcher (Windows); start_app.command for macOS/Linux
+|-- LICENSE                 MIT
+|-- CITATION.cff            citation metadata (GitHub's "Cite this repository")
 |-- requirements.txt
 `-- README.md
 ```
 
 ## License
 
-MIT License
-
-Copyright (c) 2025 Erfan Kefayat
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
+MIT License — see the [LICENSE](LICENSE) file. In short: use, modify and redistribute the code freely, keep the copyright and license notice, no warranty.
 
 ## Citation
 

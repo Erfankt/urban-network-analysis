@@ -321,10 +321,26 @@ class StreetNetworkProcessor:
         return h.hexdigest()[:10]
 
     def _checkpoint_dir(self):
-        """Checkpoint folder for the current inputs, with an inputs.json saying what they were."""
+        """
+        Checkpoint folder for the current inputs, with an inputs.json saying what they were.
+        The fingerprint hashes coordinates, not the CRS, so the same numbers declared in another
+        CRS (a corrected .prj, say) would land in the same folder although every measure differs;
+        inputs.json records the CRS of the folder, and a run whose CRS does not match it gets a
+        sibling folder of its own instead of silently reusing the wrong checkpoints.
+        """
+        crs_now = crs_label(self.source_edges.crs)
         path = os.path.join(CHECKPOINT_DIR, self._input_fingerprint())
-        os.makedirs(path, exist_ok=True)
         info = os.path.join(path, "inputs.json")
+        if os.path.exists(info):
+            try:
+                with open(info, encoding="utf-8") as f:
+                    recorded = json.load(f).get("crs")
+            except Exception:
+                recorded = None
+            if recorded != crs_now:
+                path += "-" + hashlib.sha1(crs_now.encode("utf-8")).hexdigest()[:6]
+                info = os.path.join(path, "inputs.json")
+        os.makedirs(path, exist_ok=True)
         if not os.path.exists(info):
             with open(info, "w", encoding="utf-8") as f:
                 json.dump({
@@ -472,19 +488,6 @@ class StreetNetworkProcessor:
         nodes_NPA['osmid'] = nodes_NPA["id"].astype("int")
         nodes_NPA.set_index('id', inplace=True)
         return nodes_NPA, edge_NPA
-
-    def _convert_multilinestring_to_linestring(self, geom):
-        """Converts a MultiLineString to a single LineString by concatenating coordinates."""
-        if isinstance(geom, MultiLineString):
-            coords = []
-            for part in geom.geoms:
-                coords.extend(part.coords)
-            return LineString(coords)
-        return geom
-
-    # --------------------------------------------------------------------------
-    ## Step 4 Helpers: Graph Creation and Largest Component Extraction
-    # --------------------------------------------------------------------------
 
     def _create_networkx_graph(self, nodes_gdf, edges_gdf):
         """Creates a NetworkX graph from the local nodes and edges GeoDataFrames."""

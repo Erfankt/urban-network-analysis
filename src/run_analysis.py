@@ -17,7 +17,7 @@ The measures are checkpointed neighborhood by neighborhood in data/checkpoints/ 
 buffer), so a run that stops resumes where it was and buffers already measured for the same
 input layers are reused; --recompute measures them again.
 """
-import argparse, warnings
+import argparse, sys, warnings
 
 warnings.filterwarnings("ignore")
 
@@ -76,3 +76,4 @@ if __name__ == "__main__":
         print(f"\n❌ An error occurred during processing: {e}")
         print("The neighborhoods measured so far are checkpointed; once the cause is fixed, "
               "run `python run_analysis.py --reuse` to continue.")
+        sys.exit(1)                       # scripted callers must see the failure

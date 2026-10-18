@@ -69,11 +69,33 @@ def default_id_column(gdf):
     return DEFAULT_ID_COL if DEFAULT_ID_COL in candidates else (candidates[0] if candidates else None)
 
 
+MAX_FIELD_NAME = 10     # shapefile field names hold at most 10 characters
+
+
+def column_name_problem(col):
+    """
+    Why this column cannot be carried through the pipeline (None = fine). The outputs are written
+    as shapefiles, which silently truncate field names to 10 characters: a longer name would come
+    out of stage 1 renamed and stage 2 could not find it. Separators would break the one-line
+    handoff between the web app and run_analysis.py.
+    """
+    col = str(col)
+    if len(col) > MAX_FIELD_NAME:
+        return (f"column '{col}': shapefile output truncates names to {MAX_FIELD_NAME} characters, "
+                f"so the pipeline would lose it; rename the column in the layer first")
+    if any(ch.isspace() or ch in ",;" for ch in col):
+        return f"column '{col}': the name cannot contain spaces, commas or semicolons; rename it in the layer first"
+    return None
+
+
 def check_id_column(neighborhoods, id_col):
     """Why id_col cannot identify the neighborhoods (a list of reasons; empty = fine)."""
     if id_col not in neighborhoods.columns or id_col == "geometry":
         return [f"neighborhoods: no '{id_col}' column (unique neighborhood identifier)"]
     problems, ids = [], neighborhoods[id_col]
+    bad = column_name_problem(id_col)
+    if bad:
+        problems.append(f"neighborhoods: {bad}")
     if ids.isna().any():
         problems.append(f"neighborhoods: '{id_col}' has {int(ids.isna().sum())} missing value(s)")
     if ids.duplicated().any():
@@ -267,6 +289,9 @@ def select_variables(neighborhoods, preset_crime=None, preset_controls=None, id_
             crime = _parse_choice(text, options)
             if len(crime) != 1:
                 raise ValueError("choose exactly one column")
+            bad = column_name_problem(crime[0])
+            if bad:
+                raise ValueError(bad)
             crime_col = crime[0]
             break
         except ValueError as e:
@@ -281,6 +306,9 @@ def select_variables(neighborhoods, preset_crime=None, preset_controls=None, id_
                 raise ValueError("choose at least one column")
             if crime_col in ctrl_vars:
                 raise ValueError("the dependent variable cannot also be a control")
+            bad = [column_name_problem(c) for c in ctrl_vars]
+            if any(bad):
+                raise ValueError("; ".join(b for b in bad if b))
             break
         except ValueError as e:
             print(f"  -> {e}")

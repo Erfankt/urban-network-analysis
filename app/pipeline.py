@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np, pandas as pd, geopandas as gpd, seaborn as sns, folium, psutil
 
 from run_analysis import DEFAULTS
-from user_inputs import (check_layers, identifier_candidates, default_id_column, id_column, parse_buffers,
+from user_inputs import (check_layers, identifier_candidates, default_id_column, id_column, parse_buffers, column_name_problem,
                          numeric_columns, save_selection, load_selection, update_selection, selection_summary,
                          PCA_METHODS, SELECTION_PATH)
 from street_network_processor import (StreetNetworkProcessor, NETWORK_METRICS, align_neighborhoods_crs, crs_label,
@@ -274,7 +274,7 @@ BASEMAPS = [   # (name, tile URL, attribution); the first is shown at first, the
     ("Topographic (OpenTopoMap)", "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
      "Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; <a href='https://opentopomap.org'>OpenTopoMap</a> (CC-BY-SA)"),
 ]
-STREET_SIMPLIFY_FT = 10.0          # vertices closer than this to the line are dropped before drawing (display only)
+STREET_SIMPLIFY_FT = 10.0          # feet; vertices closer than this to the line are dropped before drawing (display only)
 STREET_POPUP_COLUMNS = 8           # attribute columns listed for a clicked street (the layer has tens of thousands)
 
 
@@ -341,8 +341,10 @@ def layers_map_html(neighborhoods, edges=None, id_col="id", neighborhood_columns
                    popup=folium.GeoJsonPopup(fields=nb_cols, aliases=nb_cols, labels=True, localize=True,
                                              max_width=360)).add_to(m)
     if edges is not None:
+        edges = ensure_projected(edges)[0]          # degrees cannot be simplified by a length
         st_cols = [c for c in edges.columns if c != "geometry"]
-        st_fc, st_cols = _feature_collection(edges, st_cols, simplify_ft=STREET_SIMPLIFY_FT,
+        st_fc, st_cols = _feature_collection(edges, st_cols,
+                                             simplify_ft=STREET_SIMPLIFY_FT / feet_per_unit(edges.crs),
                                              max_columns=STREET_POPUP_COLUMNS)
         folium.GeoJson(st_fc, name=f"Streets ({len(st_fc['features'])} segments)", show=True, smooth_factor=1.0,
                        style_function=lambda f: {"color": "#34445a", "weight": 1.2, "opacity": 0.8},
@@ -393,6 +395,9 @@ def start_stage1(sel, recompute=False, n_neighborhoods=None):
     """
     if stage1_status()["state"] == "running":
         raise RuntimeError("a stage-1 run is already in progress")
+    bad = [column_name_problem(c) for c in [id_column(sel), sel["crime_col"], *sel["ctrl_vars"]]]
+    if any(bad):
+        raise ValueError("; ".join(dict.fromkeys(b for b in bad if b)))
     save_selection(sel)
     APP_OUT_DIR.mkdir(parents=True, exist_ok=True)
     cmd = stage1_command(sel, recompute)
@@ -525,10 +530,13 @@ def stop_stage1():
 
 def clear_output_dir():
     """
-    Empty output/ (the stage-1 log and run record, the diagnostic figures) when the app shuts down.
-    Only the contents go: the folder stays, and so do data/ (the measures, the checkpoints, the final
-    dataset) and everything outside the repository's output/ folder. A stage-1 run that is still going
-    keeps output/app, its log and run record. Set KEEP_OUTPUT=1 in the environment to keep the folder as is.
+    Remove from output/ what this app wrote there: output/app (the stage-1 log and run record) and,
+    at shutdown, every file created since the launch (the session's diagnostic figures). Files from
+    earlier terminal runs -- the figures in output/pca_diagnostics that document a published dataset --
+    are kept: the app regenerates its own figures, not someone else's. Called at launch (LAUNCH_TIME
+    still unset: only output/app goes) and at exit. The folder itself stays, and so do data/ (the
+    measures, the checkpoints, the final dataset) and everything outside the repository's output/
+    folder. A stage-1 run that is still going keeps output/app. KEEP_OUTPUT=1 keeps everything.
     """
     try:
         if os.environ.get("KEEP_OUTPUT") == "1":
@@ -540,14 +548,20 @@ def clear_output_dir():
             running = stage1_status()["state"] == "running"
         except Exception:
             running = False
-        for item in out.iterdir():
-            if running and item.name == "app":
-                continue
+        app_dir = out / "app"
+        if app_dir.is_dir() and not app_dir.is_symlink() and not running:
+            shutil.rmtree(app_dir, ignore_errors=True)
+        since = LAUNCH_TIME
+        if not since:                           # launch call: nothing of this session exists yet
+            return
+        for path in sorted(out.rglob("*"), reverse=True):   # deepest first, so emptied dirs can go
             try:
-                if item.is_dir() and not item.is_symlink():
-                    shutil.rmtree(item)
-                else:
-                    item.unlink()
+                if path.is_symlink():
+                    continue
+                if path.is_file() and path.stat().st_mtime >= since:
+                    path.unlink()
+                elif path.is_dir() and not any(path.iterdir()):
+                    path.rmdir()
             except OSError:
                 pass
     except Exception:

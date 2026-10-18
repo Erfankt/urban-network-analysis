@@ -41,7 +41,8 @@ def render():
         with st.expander("Choices recorded in user_selection.json"):
             st.code(json.dumps(sel, indent=2), language="json")
 
-    pngs = sorted(p for p in pl.OUT_DIR.glob("0*.png")) if pl.OUT_DIR.exists() else []
+    pngs = sorted(p for p in pl.OUT_DIR.glob("0*.png")
+                  if not pl.LAUNCH_TIME or p.stat().st_mtime >= pl.LAUNCH_TIME) if pl.OUT_DIR.exists() else []
     if pngs:
         with st.expander(f"Component-analysis figures ({len(pngs)})"):
             for p in pngs:

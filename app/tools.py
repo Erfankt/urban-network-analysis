@@ -77,7 +77,8 @@ def _read(path, geometry):
     p = _resolve(path)
     if not p.exists():
         return None
-    key = (str(p), p.stat().st_mtime, geometry)
+    sidecars = sorted(p.parent.glob(p.stem + ".*")) if p.parent.is_dir() else [p]
+    key = (str(p), tuple((s.name, s.stat().st_mtime) for s in sidecars), geometry)
     if key not in _CACHE:
         if len(_CACHE) > 8:
             _CACHE.clear()

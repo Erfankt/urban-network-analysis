@@ -27,7 +27,14 @@ TILE_CSS = """<style>
 
 
 def _mtimes(*paths):
-    return tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in paths)
+    """Cache key for the layer files: the modification times of each file AND its sidecars
+    (.prj, .dbf, .shx, ...), so editing a sidecar in place refreshes the page too."""
+    out = []
+    for p in paths:
+        p = Path(p)
+        sibs = sorted(p.parent.glob(p.stem + ".*")) if p.parent.is_dir() else []
+        out.append(tuple((s.name, os.path.getmtime(s)) for s in sibs) or ((p.name, 0),))
+    return tuple(out)
 
 
 @st.cache_resource(show_spinner="Reading the layers…")
