@@ -25,7 +25,7 @@ from sqlalchemy import create_engine, text
 # ── Connection ────────────────────────────────────────────────────────────────
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
+DB_PORT = os.getenv("DB_PORT", "5433")
 DB_NAME = os.getenv("DB_NAME", "urban_crime")
 DB_USER = os.getenv("DB_USER", "erfan")
 DB_PASS = os.getenv("DB_PASS", "localdev")
@@ -72,7 +72,6 @@ def load_npa(engine, gdf: gpd.GeoDataFrame) -> None:
     rows = rows.rename_geometry("geom")
     rows.to_postgis(
         "npa", engine, if_exists="append", index=False,
-        geometry_col="geom",
     )
     print(f"  ✓ npa: {len(rows)} rows")
 
