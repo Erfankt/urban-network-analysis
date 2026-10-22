@@ -111,12 +111,10 @@ with tab1:
         st.dataframe(top10, use_container_width=True, hide_index=True)
 
     with col_a:
-        # build geometry by fetching each NPA detail (cached) — use a progress bar
-        # for speed we load all details and build a GeoDataFrame
         progress = st.progress(0, text="Fetching NPA geometries…")
         features = []
         npa_ids = df["npa_id"].tolist()
-        for i, npa_id in enumerate(npa_ids[:50]):   # limit to first 50 for speed demo
+        for i, npa_id in enumerate(npa_ids[:50]):
             try:
                 detail = fetch_npa_detail(str(npa_id))
                 features.append({
@@ -131,7 +129,6 @@ with tab1:
         progress.empty()
 
         if features:
-            import json
             from shapely.geometry import shape
 
             gdf = gpd.GeoDataFrame(
@@ -140,7 +137,7 @@ with tab1:
             ).to_crs("EPSG:4326")
 
             m = folium.Map(location=[35.23, -80.84], zoom_start=11,
-                           tiles="CartoDB positron")
+                           tiles="OpenStreetMap")
             Choropleth(
                 geo_data=gdf.__geo_interface__,
                 data=gdf,
@@ -265,9 +262,8 @@ with tab3:
             near_df["dist_mi"] = near_df["dist_ft"] / 5280
             st.success(f"Found **{len(near_df)} NPAs** within {radius} mi of ({lat:.4f}, {lon:.4f})")
 
-            # Map
             m2 = folium.Map(location=[lat, lon], zoom_start=13,
-                            tiles="CartoDB positron")
+                            tiles="OpenStreetMap")
             folium.Marker(
                 [lat, lon],
                 tooltip="Query point",
@@ -275,13 +271,10 @@ with tab3:
             ).add_to(m2)
 
             for _, row in near_df.iterrows():
-                # approximate NPA centroid via detail endpoint
                 try:
                     detail = fetch_npa_detail(str(row["npa_id"]))
-                    geom = detail["geometry"]
-                    # centroid from polygon coords (simple average)
                     from shapely.geometry import shape
-                    s = shape(geom)
+                    s = shape(detail["geometry"])
                     cy, cx = s.centroid.y, s.centroid.x
                     folium.CircleMarker(
                         [cy, cx],
@@ -296,7 +289,6 @@ with tab3:
 
             st_folium(m2, width="100%", height=440)
 
-            # Table
             display_df = near_df[["npa_id", "dist_mi", "propcrim_1k"]].copy()
             display_df.columns = ["NPA ID", "Distance (mi)", "Crime / 1k"]
             display_df["Distance (mi)"] = display_df["Distance (mi)"].round(3)
