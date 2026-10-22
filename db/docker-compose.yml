@@ -18,5 +18,23 @@ services:
       interval: 5s
       retries: 10
 
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    container_name: urban_crime_api
+    environment:
+      DB_HOST: postgis
+      DB_PORT: 5432        # internal Docker network; postgis container listens on 5432
+      DB_NAME: urban_crime
+      DB_USER: erfan
+      DB_PASS: localdev
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgis:
+        condition: service_healthy
+    restart: on-failure
+
 volumes:
   pgdata:
