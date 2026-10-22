@@ -12,6 +12,8 @@ Endpoints
 
 Run locally:
   uvicorn api.main:app --reload --port 8000
+Run in Docker (from /app):
+  uvicorn main:app --host 0.0.0.0 --port 8000
 """
 
 import json
@@ -21,8 +23,8 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from .database import get_db
-from .schemas import (
+from database import get_db
+from schemas import (
     MetricTopRow,
     NPADetail,
     NPANetwork,
