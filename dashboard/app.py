@@ -1,23 +1,22 @@
 """
 dashboard/app.py
 Urban Street Network & Crime — Streamlit Dashboard
-Pulls live data from the FastAPI service at http://localhost:8000
+Pulls live data from the FastAPI service.
+No geopandas/GDAL dependency — folium accepts raw GeoJSON dicts.
 """
 
 import os
 
 import requests
 import pandas as pd
-import geopandas as gpd
 import folium
 from folium import Choropleth, GeoJsonTooltip
 from streamlit_folium import st_folium
 import plotly.express as px
 import streamlit as st
-from shapely.geometry import shape
 
 # When running inside Docker, API_URL is set to http://api:8000 (internal DNS).
-# When running locally, it defaults to http://localhost:8000.
+# When running locally, defaults to http://localhost:8000.
 API = os.getenv("API_URL", "http://localhost:8000")
 
 # ── page config ───────────────────────────────────────────────────────────────
@@ -28,41 +27,27 @@ st.set_page_config(
 )
 
 st.title("🏙️ Charlotte NPA — Crime & Street Network Dashboard")
-st.caption("Data: Kefayat & Thill (2025), ISPRS Int. J. Geo-Information 14(5), 200 · API: localhost:8000")
+st.caption("Data: Kefayat & Thill (2025), ISPRS Int. J. Geo-Information 14(5), 200 · API: " + API)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300)
-def fetch_npa_list():
+def fetch_npa_list() -> pd.DataFrame:
     r = requests.get(f"{API}/npa", timeout=10)
     r.raise_for_status()
     return pd.DataFrame(r.json())
 
 
 @st.cache_data(ttl=300)
-def fetch_npa_geojson():
-    """Fetch all 371 NPAs as a GeoDataFrame in one request."""
+def fetch_npa_geojson() -> dict:
+    """Fetch all 371 NPAs as a raw GeoJSON FeatureCollection dict (WGS84)."""
     r = requests.get(f"{API}/npa/geojson", timeout=30)
-    r.raise_for_status()
-    fc = r.json()
-    features = fc["features"]
-    gdf = gpd.GeoDataFrame.from_features(features, crs="EPSG:4326")
-    # flatten properties
-    props = pd.json_normalize([f["properties"] for f in features])
-    for col in props.columns:
-        gdf[col] = props[col].values
-    return gdf
-
-
-@st.cache_data(ttl=300)
-def fetch_npa_detail(npa_id: str):
-    r = requests.get(f"{API}/npa/{npa_id}", timeout=10)
     r.raise_for_status()
     return r.json()
 
 
 @st.cache_data(ttl=300)
-def fetch_top(metric: str, buffer_mi: float, n: int = 371):
+def fetch_top(metric: str, buffer_mi: float, n: int = 371) -> pd.DataFrame:
     r = requests.get(f"{API}/metrics/top",
                      params={"metric": metric, "buffer_mi": buffer_mi, "n": n},
                      timeout=10)
@@ -70,7 +55,7 @@ def fetch_top(metric: str, buffer_mi: float, n: int = 371):
     return pd.DataFrame(r.json())
 
 
-def fetch_near(lon: float, lat: float, radius_mi: float):
+def fetch_near(lon: float, lat: float, radius_mi: float) -> pd.DataFrame:
     r = requests.get(f"{API}/spatial/near",
                      params={"lon": lon, "lat": lat, "radius_mi": radius_mi},
                      timeout=10)
@@ -112,31 +97,35 @@ with tab1:
     with st.spinner("Loading NPA data from API…"):
         try:
             df = fetch_npa_list()
-            gdf = fetch_npa_geojson()
+            fc = fetch_npa_geojson()   # raw dict — no geopandas needed
         except Exception as e:
-            st.error(f"Could not reach API: {e}")
+            st.error(f"Could not reach API at {API}: {e}")
             st.stop()
 
     col_a, col_b = st.columns([3, 1])
 
     with col_b:
         st.metric("Total NPAs", len(df))
-        st.metric("Max crime/1k", f"{df['propcrim_1k'].max():.1f}")
+        st.metric("Max crime/1k",    f"{df['propcrim_1k'].max():.1f}")
         st.metric("Median crime/1k", f"{df['propcrim_1k'].median():.1f}")
-        st.metric("Min crime/1k", f"{df['propcrim_1k'].min():.1f}")
+        st.metric("Min crime/1k",    f"{df['propcrim_1k'].min():.1f}")
 
         st.markdown("---")
         st.markdown("**Top 10 highest-crime NPAs**")
-        top10 = df.nlargest(10, "propcrim_1k")[["npa_id", "propcrim_1k"]].reset_index(drop=True)
+        top10 = (df.nlargest(10, "propcrim_1k")
+                   [["npa_id", "propcrim_1k"]]
+                   .reset_index(drop=True))
         top10.columns = ["NPA", "Crime/1k"]
         st.dataframe(top10, use_container_width=True, hide_index=True)
 
     with col_a:
         m = folium.Map(location=[35.23, -80.84], zoom_start=11,
                        tiles="OpenStreetMap")
+
+        # Choropleth uses the raw GeoJSON dict and the summary DataFrame
         Choropleth(
-            geo_data=gdf.__geo_interface__,
-            data=gdf,
+            geo_data=fc,                         # raw GeoJSON dict
+            data=df,
             columns=["npa_id", "propcrim_1k"],
             key_on="feature.properties.npa_id",
             fill_color="YlOrRd",
@@ -146,8 +135,9 @@ with tab1:
             nan_fill_color="lightgray",
         ).add_to(m)
 
+        # Tooltip layer — zero-opacity fill so only the hover label shows
         folium.GeoJson(
-            gdf.__geo_interface__,
+            fc,
             tooltip=GeoJsonTooltip(
                 fields=["npa_id", "propcrim_1k", "propcrim_ct"],
                 aliases=["NPA ID", "Crime / 1k residents", "Crime count"],
@@ -253,14 +243,24 @@ with tab3:
             st.warning("No NPAs found within that radius.")
         else:
             near_df["dist_mi"] = near_df["dist_ft"] / 5280
-            st.success(f"Found **{len(near_df)} NPAs** within {radius} mi of ({lat:.4f}, {lon:.4f})")
+            st.success(
+                f"Found **{len(near_df)} NPAs** within {radius} mi "
+                f"of ({lat:.4f}, {lon:.4f})"
+            )
 
-            # Use cached GeoDataFrame for geometry
+            # Filter the cached full GeoJSON to just the nearby NPAs
             try:
-                gdf_all = fetch_npa_geojson()
-                gdf_near = gdf_all[gdf_all["npa_id"].isin(near_df["npa_id"].astype(str))]
+                full_fc = fetch_npa_geojson()
+                nearby_ids = set(near_df["npa_id"].astype(str))
+                nearby_fc = {
+                    "type": "FeatureCollection",
+                    "features": [
+                        f for f in full_fc["features"]
+                        if str(f["properties"]["npa_id"]) in nearby_ids
+                    ],
+                }
             except Exception:
-                gdf_near = None
+                nearby_fc = None
 
             m2 = folium.Map(location=[lat, lon], zoom_start=13,
                             tiles="OpenStreetMap")
@@ -270,14 +270,9 @@ with tab3:
                 icon=folium.Icon(color="blue", icon="info-sign"),
             ).add_to(m2)
 
-            # Draw NPA polygons from cached GeoDataFrame
-            if gdf_near is not None and not gdf_near.empty:
-                near_merged = gdf_near.merge(
-                    near_df[["npa_id", "dist_ft"]].assign(npa_id=near_df["npa_id"].astype(str)),
-                    on="npa_id", how="left"
-                )
+            if nearby_fc and nearby_fc["features"]:
                 folium.GeoJson(
-                    near_merged.__geo_interface__,
+                    nearby_fc,
                     tooltip=GeoJsonTooltip(
                         fields=["npa_id", "propcrim_1k"],
                         aliases=["NPA ID", "Crime / 1k"],
@@ -297,7 +292,9 @@ with tab3:
             display_df.columns = ["NPA ID", "Distance (mi)", "Crime / 1k"]
             display_df["Distance (mi)"] = display_df["Distance (mi)"].round(3)
             st.dataframe(
-                display_df.style.background_gradient(subset=["Crime / 1k"], cmap="YlOrRd"),
+                display_df.style.background_gradient(
+                    subset=["Crime / 1k"], cmap="YlOrRd"
+                ),
                 use_container_width=True,
                 hide_index=True,
             )
