@@ -5,6 +5,7 @@ Urban Street Network & Crime — REST API
 Endpoints
   GET  /                           health check + API info
   GET  /npa                        list all 371 NPAs (summary)
+  GET  /npa/geojson                all 371 NPAs as a GeoJSON FeatureCollection
   GET  /npa/{npa_id}               full feature row for one NPA
   GET  /npa/{npa_id}/network       network measures (long format) for one NPA
   GET  /metrics/top                top-N NPAs by a given network metric + buffer
@@ -20,6 +21,7 @@ import json
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -84,6 +86,50 @@ def list_npas(db: Session = Depends(get_db)):
     return [_row_to_dict(r) for r in rows]
 
 
+@app.get("/npa/geojson", tags=["npa"])
+def all_npa_geojson(db: Session = Depends(get_db)):
+    """
+    Return all 371 NPAs as a GeoJSON FeatureCollection (WGS84).
+    Each feature carries npa_id, area_acre, propcrim_ct, propcrim_1k,
+    propcrim_acre as properties. Geometry is reprojected from EPSG:2264.
+    """
+    rows = db.execute(text("""
+        SELECT
+            n.npa_id,
+            n.area_acre,
+            c.propcrim_ct,
+            c.propcrim_1k,
+            c.propcrim_acre,
+            ST_AsGeoJSON(
+                ST_Transform(n.geom, 4326)
+            )::json AS geometry
+        FROM  npa n
+        LEFT JOIN npa_crime c ON c.npa_id = n.npa_id
+        ORDER BY n.npa_id
+    """)).fetchall()
+
+    features = []
+    for r in rows:
+        d = _row_to_dict(r)
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "npa_id":       d["npa_id"],
+                "area_acre":    d["area_acre"],
+                "propcrim_ct":  d["propcrim_ct"],
+                "propcrim_1k":  d["propcrim_1k"],
+                "propcrim_acre": d["propcrim_acre"],
+            },
+            "geometry": d["geometry"],
+        })
+
+    return JSONResponse(content={
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        "features": features,
+    })
+
+
 @app.get("/npa/{npa_id}", response_model=NPADetail, tags=["npa"])
 def get_npa(npa_id: str, db: Session = Depends(get_db)):
     """Return the full feature row for one NPA, including geometry as GeoJSON."""
@@ -133,7 +179,6 @@ def get_npa_network(
     db: Session = Depends(get_db),
 ):
     """Return network measures for one NPA, optionally filtered by metric and/or buffer."""
-    # verify NPA exists
     exists = db.execute(
         text("SELECT 1 FROM npa WHERE npa_id = :id"), {"id": npa_id}
     ).fetchone()

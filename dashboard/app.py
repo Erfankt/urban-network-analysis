@@ -4,6 +4,8 @@ Urban Street Network & Crime — Streamlit Dashboard
 Pulls live data from the FastAPI service at http://localhost:8000
 """
 
+import os
+
 import requests
 import pandas as pd
 import geopandas as gpd
@@ -12,8 +14,11 @@ from folium import Choropleth, GeoJsonTooltip
 from streamlit_folium import st_folium
 import plotly.express as px
 import streamlit as st
+from shapely.geometry import shape
 
-API = "http://localhost:8000"
+# When running inside Docker, API_URL is set to http://api:8000 (internal DNS).
+# When running locally, it defaults to http://localhost:8000.
+API = os.getenv("API_URL", "http://localhost:8000")
 
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -32,6 +37,21 @@ def fetch_npa_list():
     r = requests.get(f"{API}/npa", timeout=10)
     r.raise_for_status()
     return pd.DataFrame(r.json())
+
+
+@st.cache_data(ttl=300)
+def fetch_npa_geojson():
+    """Fetch all 371 NPAs as a GeoDataFrame in one request."""
+    r = requests.get(f"{API}/npa/geojson", timeout=30)
+    r.raise_for_status()
+    fc = r.json()
+    features = fc["features"]
+    gdf = gpd.GeoDataFrame.from_features(features, crs="EPSG:4326")
+    # flatten properties
+    props = pd.json_normalize([f["properties"] for f in features])
+    for col in props.columns:
+        gdf[col] = props[col].values
+    return gdf
 
 
 @st.cache_data(ttl=300)
@@ -84,7 +104,7 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 1 — Crime Choropleth Map
+# TAB 1 — Crime Choropleth Map (all 371 NPAs, one API call)
 # ════════════════════════════════════════════════════════════════════════════
 with tab1:
     st.subheader("Property Crime Rate by Neighborhood Planning Area")
@@ -92,6 +112,7 @@ with tab1:
     with st.spinner("Loading NPA data from API…"):
         try:
             df = fetch_npa_list()
+            gdf = fetch_npa_geojson()
         except Exception as e:
             st.error(f"Could not reach API: {e}")
             st.stop()
@@ -111,59 +132,31 @@ with tab1:
         st.dataframe(top10, use_container_width=True, hide_index=True)
 
     with col_a:
-        progress = st.progress(0, text="Fetching NPA geometries…")
-        features = []
-        npa_ids = df["npa_id"].tolist()
-        for i, npa_id in enumerate(npa_ids[:50]):
-            try:
-                detail = fetch_npa_detail(str(npa_id))
-                features.append({
-                    "npa_id": npa_id,
-                    "propcrim_1k": detail.get("propcrim_1k"),
-                    "geometry": detail["geometry"],
-                })
-            except Exception:
-                pass
-            progress.progress((i + 1) / min(len(npa_ids), 50),
-                              text=f"Loaded {i+1}/50 NPAs…")
-        progress.empty()
+        m = folium.Map(location=[35.23, -80.84], zoom_start=11,
+                       tiles="OpenStreetMap")
+        Choropleth(
+            geo_data=gdf.__geo_interface__,
+            data=gdf,
+            columns=["npa_id", "propcrim_1k"],
+            key_on="feature.properties.npa_id",
+            fill_color="YlOrRd",
+            fill_opacity=0.7,
+            line_opacity=0.3,
+            legend_name="Property Crimes per 1,000 Residents",
+            nan_fill_color="lightgray",
+        ).add_to(m)
 
-        if features:
-            from shapely.geometry import shape
+        folium.GeoJson(
+            gdf.__geo_interface__,
+            tooltip=GeoJsonTooltip(
+                fields=["npa_id", "propcrim_1k", "propcrim_ct"],
+                aliases=["NPA ID", "Crime / 1k residents", "Crime count"],
+                localize=True,
+            ),
+            style_function=lambda f: {"fillOpacity": 0, "weight": 0},
+        ).add_to(m)
 
-            gdf = gpd.GeoDataFrame(
-                [{**f, "geometry": shape(f["geometry"])} for f in features],
-                crs="EPSG:2264",
-            ).to_crs("EPSG:4326")
-
-            m = folium.Map(location=[35.23, -80.84], zoom_start=11,
-                           tiles="OpenStreetMap")
-            Choropleth(
-                geo_data=gdf.__geo_interface__,
-                data=gdf,
-                columns=["npa_id", "propcrim_1k"],
-                key_on="feature.properties.npa_id",
-                fill_color="YlOrRd",
-                fill_opacity=0.7,
-                line_opacity=0.3,
-                legend_name="Property Crimes per 1,000 Residents",
-                nan_fill_color="lightgray",
-            ).add_to(m)
-
-            folium.GeoJson(
-                gdf.__geo_interface__,
-                tooltip=GeoJsonTooltip(
-                    fields=["npa_id", "propcrim_1k"],
-                    aliases=["NPA ID", "Crime / 1k residents"],
-                    localize=True,
-                ),
-                style_function=lambda f: {"fillOpacity": 0, "weight": 0},
-            ).add_to(m)
-
-            st_folium(m, width="100%", height=520)
-            st.caption("⚠️ Showing first 50 NPAs for demo speed. Full dataset: 371 NPAs.")
-        else:
-            st.warning("No geometry data returned from API.")
+        st_folium(m, width="100%", height=520)
 
 # ════════════════════════════════════════════════════════════════════════════
 # TAB 2 — Network Metrics Explorer
@@ -262,30 +255,41 @@ with tab3:
             near_df["dist_mi"] = near_df["dist_ft"] / 5280
             st.success(f"Found **{len(near_df)} NPAs** within {radius} mi of ({lat:.4f}, {lon:.4f})")
 
+            # Use cached GeoDataFrame for geometry
+            try:
+                gdf_all = fetch_npa_geojson()
+                gdf_near = gdf_all[gdf_all["npa_id"].isin(near_df["npa_id"].astype(str))]
+            except Exception:
+                gdf_near = None
+
             m2 = folium.Map(location=[lat, lon], zoom_start=13,
                             tiles="OpenStreetMap")
             folium.Marker(
                 [lat, lon],
                 tooltip="Query point",
-                icon=folium.Icon(color="blue", icon="crosshairs", prefix="fa"),
+                icon=folium.Icon(color="blue", icon="info-sign"),
             ).add_to(m2)
 
-            for _, row in near_df.iterrows():
-                try:
-                    detail = fetch_npa_detail(str(row["npa_id"]))
-                    from shapely.geometry import shape
-                    s = shape(detail["geometry"])
-                    cy, cx = s.centroid.y, s.centroid.x
-                    folium.CircleMarker(
-                        [cy, cx],
-                        radius=8,
-                        color="#d62728",
-                        fill=True,
-                        fill_opacity=0.6,
-                        tooltip=f"NPA {row['npa_id']} | {row['dist_mi']:.2f} mi | crime/1k: {row['propcrim_1k']}",
-                    ).add_to(m2)
-                except Exception:
-                    pass
+            # Draw NPA polygons from cached GeoDataFrame
+            if gdf_near is not None and not gdf_near.empty:
+                near_merged = gdf_near.merge(
+                    near_df[["npa_id", "dist_ft"]].assign(npa_id=near_df["npa_id"].astype(str)),
+                    on="npa_id", how="left"
+                )
+                folium.GeoJson(
+                    near_merged.__geo_interface__,
+                    tooltip=GeoJsonTooltip(
+                        fields=["npa_id", "propcrim_1k"],
+                        aliases=["NPA ID", "Crime / 1k"],
+                        localize=True,
+                    ),
+                    style_function=lambda f: {
+                        "fillColor": "#d62728",
+                        "color": "#7f0000",
+                        "weight": 1.5,
+                        "fillOpacity": 0.45,
+                    },
+                ).add_to(m2)
 
             st_folium(m2, width="100%", height=440)
 

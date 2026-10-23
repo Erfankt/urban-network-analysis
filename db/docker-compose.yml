@@ -36,5 +36,19 @@ services:
         condition: service_healthy
     restart: on-failure
 
+  dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    container_name: urban_crime_dashboard
+    environment:
+      # Internal Docker DNS — dashboard talks to the api container directly
+      API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    restart: on-failure
+
 volumes:
   pgdata:
