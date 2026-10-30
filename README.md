@@ -215,6 +215,8 @@ The sections call `app/pipeline.py`, which calls the functions in `src/` from th
 
 In addition to the reproducibility pipeline, the repository includes a **production-style data service** that exposes the research dataset through a REST API and visualises it in an interactive Streamlit dashboard.
 
+![Dashboard demo — crime choropleth, network metrics scatter, and spatial proximity tool](docs/dashboard_demo.gif)
+
 ### Architecture
 
 ```
