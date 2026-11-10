@@ -117,7 +117,7 @@ It then runs `StreetNetworkProcessor` (`src/street_network_processor.py`):
 1. **Node extraction**: a node at every segment endpoint; shared endpoints become one node.
 2. **Simplification**: degree-2 nodes (continuations of the same road) are removed and their segments merged, so nodes represent intersections and dead ends.
 3. **Buffered local networks**: each neighborhood polygon is buffered by the chosen distances and the segments intersecting the buffer form the local network, of which the largest connected component is kept.
-4. **Measures**: eight metrics per neighborhood and buffer, computed with NetworkX (betweenness and shortest paths are length-weighted).
+4. **Measures**: eight metrics per neighborhood and buffer, computed with NetworkX.
 
 | Metric code | Measure | Definition |
 |---|---|---|
@@ -130,11 +130,9 @@ It then runs `StreetNetworkProcessor` (`src/street_network_processor.py`):
 | `cl_cnt` | Average closeness centrality | Mean closeness of the nodes |
 | `pr_cnt` | Average PageRank | Mean PageRank of the nodes |
 
-Column names are `<metric code><buffer code>`, where the buffer code is the distance in miles with the decimal point removed: `1` (0.1 mi), `025`, `05`, `075`, `10` (1.0 mi); e.g. `int_den075`. The rule is implemented once, in `StreetNetworkProcessor.buffer_code()`, and keeps field names within the 10-character limit of shapefiles. Output: `data/final_dataset/extracted_measures.shp`, the neighborhoods layer with the measure columns appended (40 for the five default buffers).
+Column names are `<metric code><buffer code>`, where the buffer code is the distance in miles with the decimal point removed: `1` (0.1 mi), `025`, `05`, `075`, `10` (1.0 mi); e.g. `int_den075`. Output: `data/final_dataset/extracted_measures.shp`, the neighborhoods layer with the measure columns appended. The run can take a while for a city-sized network: the centrality and shortest-path measures are computed for every node of every local network, and progress bars report each step.
 
-The run can take a while for a city-sized network: the centrality and shortest-path measures are computed for every node of every local network, and progress bars report each step. The larger buffers take disproportionately longer, since these measures grow faster than the size of the local network.
-
-**Checkpoints and resuming.** The measures are saved as they are produced, not at the end: each buffer has a CSV in `data/checkpoints/<fingerprint>/` to which a neighborhood's row is appended the moment it has been measured. A run that stops for any reason (an error, Ctrl+C, the computer going to sleep) therefore loses at most the neighborhood in progress; `python run_analysis.py --reuse` continues from there, skipping the neighborhoods and buffers already done. The checkpoints are keyed by a fingerprint of the street and neighborhood geometries (`inputs.json` in the folder says which files they came from), so a run with other layers never reuses them by mistake, while a run with the same layers reuses them even if the attributes changed: changing the crime column or the control variables, or adding a buffer distance, costs only the new work. `extracted_measures.shp` is assembled from the checkpoints at the end of every run and overwritten, since rebuilding it takes seconds. `--recompute` deletes the checkpoints of the buffers in the run before measuring (after a change to the measure code, say), so a recompute run that is interrupted and then resumed with `--reuse` never falls back on old files; deleting the folder has the same effect. The folder is not tracked by git.
+> **Note:** Checkpoints and resuming. The measures are saved as they are produced: each buffer has a CSV in `data/checkpoints/<fingerprint>/`, and a neighborhood's row is appended as soon as it is measured. If a run stops for any reason, `python run_analysis.py --reuse` continues from where it left off. The fingerprint is computed from the street and neighborhood geometries, so other layers never reuse the checkpoints, while changing the crime column, the controls or the buffer distances only costs the new work. `--recompute` deletes the checkpoints of the buffers in the run before measuring.
 
 ## Stage 2: component analysis (`src/pca_analysis.py`)
 
