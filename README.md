@@ -40,20 +40,18 @@ Python 3.11 is recommended (implemented version in the paper). The dependencies 
 3. The launcher creates `.venv`, installs Streamlit, and opens your browser. Its window closes by itself (Windows) or can be closed. The page's **0 · Setup** section installs the remaining packages.
 4. To stop the app, close the browser tab, the server shuts down after about 30 seconds. To keep it running, add `KEEP_RUNNING=1` to a `.env` file in the repository folder before launching.
 
-**From the web interface (the easy way).** You need Python and nothing else. From the repository folder:
+**2. From the web interface**
 
-```bash
-python -m venv .venv
-```
-
-then activate it (step 2 below), install the one package the interface itself needs, and start it:
-
-```bash
-pip install streamlit
-streamlit run app/streamlit_app.py
-```
-
-The first section of the page, **0 · Setup**, checks the Python version, whether `.venv` exists and whether the app runs inside it, and every package of `requirements.txt` with its pinned version. If all is in place it shows a single line ("Python 3.11 · 16 packages in place · running in the virtual environment .venv", with the package table under *Details*) and the page goes straight on to the inputs. If something is missing it shows only the Setup section: the missing or mismatched packages, an optional tick for Jupyter (only the notebook version of stage 2 needs it), and the choice of where to install: a new `.venv`, the existing one, or the Python that runs the app. One button does it, with the pip output shown live. Installing into the running Python carries on by itself; installing into a `.venv` that the app is not running in ends with a **Restart the app** button that starts the app again inside it (same port, same terminal) and reloads the page. The step needs an internet connection and takes a few minutes the first time.
+1. Create the virtual environment from the repository folder:
+   ```bash
+   python -m venv .venv
+   ```
+2. Activate it (step 2 in option 3 below), then install Streamlit and start the app:
+   ```bash
+   pip install streamlit
+   streamlit run app/streamlit_app.py
+   ```
+3. The page's **0 · Setup** section checks the Python version, the `.venv`, and every package in `requirements.txt`. If everything is in place, it shows a single status line and moves straight to the inputs. If something is missing, it lists the missing packages and lets you install into a new `.venv`, the existing one, or the running Python — one button does it, with live pip output. Requires an internet connection; takes a few minutes the first time.
 
 **From the terminal (for the scripts).** Create and fill the environment once.
 
