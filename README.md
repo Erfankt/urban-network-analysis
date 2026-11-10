@@ -75,7 +75,7 @@ Python 3.11 is recommended (implemented version in the paper). The dependencies 
 
 ## Input data
 
-The default locations are below. The streets layer can be in any projected CRS (feet or metres) or latitude/longitude. The pipeline converts units automatically. If the neighborhoods layer is in a different CRS, it is reprojected to match the streets layer. The setup validates both layers before anything runs.
+The default locations are below and data should be located within the directory below. The streets layer can be in any projected CRS (feet or metres) or latitude/longitude. The pipeline converts units automatically. If the neighborhoods layer is in a different CRS, it is reprojected to match the streets layer. The setup validates both layers before anything runs.
 
 | File | Content | Requirements |
 |---|---|---|
