@@ -172,17 +172,17 @@ All choices are appended to `user_selection.json`, which after both stages reads
 
 `data/final_dataset/final_dataset.shp` (with geometry, for spatial weights) and `final_dataset.csv` (the same table) contain one row per neighborhood:
 
-| Column(s) | Role | Use in the models |
+| Column(s) | Role | Use in the paper |
 |---|---|---|
 | identifier column (name as selected, `id` in the paper's data) | identifier | |
 | `cent_x`, `cent_y` | polygon centroid in the layer CRS | coordinates for GWR |
 | crime column (name as selected) | dependent variable | property crime count |
 | `area_acre` | exposure | `log(area_acre)` as offset in the count models |
-| representative measures (original names, e.g. `int_den075`) | street-network regressors | apply `log(x + 1)` before modeling |
-| `PC1_net` ... `PCn_net` | network component scores | alternative specification for a robustness check; not log-transformed |
+| representative measures (original names, e.g. `int_den075`) | street-network regressors | |
+| `PC1_net` ... `PCn_net` | network component scores | alternative specification for a robustness check |
 | `PC1_ctrl` ... `PCk_ctrl` | socio-spatial component scores | controls |
 
-`final_dataset_dictionary.csv` repeats this for the actual columns, including which component each representative stands for and its rotated loading. The paper's models use queen contiguity for the spatial weights, which can be built from the shapefile.
+`final_dataset_dictionary.csv` repeats this for the actual columns, including which component each representative stands for and its rotated loading.
 
 ## Web interface (`app/streamlit_app.py`)
 
