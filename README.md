@@ -53,27 +53,24 @@ Python 3.11 is recommended (implemented version in the paper). The dependencies 
    ```
 3. The app opens and navigates to **0 · Setup**.
 
-**3. From the terminal (for the scripts)**
+**3. From the terminal**
 
-1. Create the virtual environment (first time only):
+1. Create the virtual environment:
    ```bash
    python -m venv .venv
    ```
-2. Activate it (in every new terminal; the prompt then starts with `(.venv)`):
+2. Activate it:
    ```bash
-   # Windows, Command Prompt
-   .venv\Scripts\activate
-   # Windows, PowerShell
-   .venv\Scripts\Activate.ps1
-   # macOS / Linux
-   source .venv/bin/activate
+   # Windows, Command Prompt:   .venv\Scripts\activate
+   # Windows, PowerShell:       .venv\Scripts\Activate.ps1
+   # macOS / Linux:             source .venv/bin/activate
    ```
-3. Install the dependencies (first time, or after `requirements.txt` changes):
+3. Install the dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-To see whether an existing environment is already complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"`: if it prints a version without an error, skip step 3. `requirements.txt` pins scikit-learn because `factor_analyzer` 0.5.x uses an interface that scikit-learn 1.8 removed: Python up to 3.13 gets the tested `<1.6`, and Python 3.14+ (which has no prebuilt `scikit-learn<1.6`) gets `1.7`, with identical component-analysis results. An error such as `check_array() got an unexpected keyword argument 'force_all_finite'` means the script is running outside this environment, with scikit-learn 1.8 or newer: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment. The last group of `requirements.txt` (Streamlit and three small packages) is only needed for the web interface.
+> **Note:** To check if an existing environment is complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"` — if it prints a version, skip step 3. A `check_array() got an unexpected keyword argument 'force_all_finite'` error means the script is running outside `.venv` with scikit-learn 1.8+; activate the environment and retry. Jupyter is only needed for the notebook version of stage 2. The Streamlit packages at the end of `requirements.txt` are only needed for the web interface.
 
 ## Input data
 
