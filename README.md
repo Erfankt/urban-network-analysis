@@ -69,6 +69,7 @@ Python 3.11 is recommended (implemented version in the paper). The dependencies 
    ```bash
    pip install -r requirements.txt
    ```
+4. You are ready. See **Stage 1** and **Stage 2** below to run the analysis.
 
 > **Note:** To check if an existing environment is complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"` — if it prints a version, skip step 3. A `check_array() got an unexpected keyword argument 'force_all_finite'` error means the script is running outside `.venv` with scikit-learn 1.8+; activate the environment and retry. Jupyter is only needed for the notebook version of stage 2. The Streamlit packages at the end of `requirements.txt` are only needed for the web interface.
 
