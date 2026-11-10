@@ -94,7 +94,7 @@ The script reads the two layers from the default locations above (use `--streets
 The same answers can be given up front, for scripted or repeated runs; whatever is missing is still prompted for:
 
 ```bash
-python run_analysis.py --crime propcrimct --controls bachdg,med_age,emp
+python run_analysis.py
 python run_analysis.py --reuse        # rerun with the previously saved answers, no questions
 python run_analysis.py --recompute    # ignore the checkpoints (see below) and measure every buffer again
 ```
