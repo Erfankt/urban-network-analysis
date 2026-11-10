@@ -38,7 +38,7 @@ Python 3.11 is recommended (implemented version in the paper). The dependencies 
 1. Install Python 3.11.
 2. Double-click `start_app.bat` (Windows) or `start_app.command` (macOS/Linux). On macOS/Linux, make it executable first: `chmod +x start_app.command`.
 3. The launcher creates `.venv`, installs Streamlit, and opens your browser. Its window closes by itself (Windows) or can be closed. The page's **0 · Setup** section installs the remaining packages.
-4. To stop the app, close the browser tab — the server shuts down after about 30 seconds. To keep it running, add `KEEP_RUNNING=1` to a `.env` file in the repository folder before launching.
+4. To stop the app, close the browser tab, the server shuts down after about 30 seconds. To keep it running, add `KEEP_RUNNING=1` to a `.env` file in the repository folder before launching.
 
 **From the web interface (the easy way).** You need Python and nothing else. From the repository folder:
 
