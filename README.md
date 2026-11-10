@@ -12,10 +12,10 @@ The pipeline has two front ends over the same code: the terminal scripts describ
 ## Workflow
 
 ```
-data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
-(cleaned street centerline)               (polygons: id, crime variable, control variables)
-            |                                        |
-            v                                        v
+data/streetnetwork/streets.shp  +  data/neighborhoods/neighborhoods.shp
+(cleaned street centerline)        (polygons: id, crime variable, control variables)
+            |
+            v
   1. python run_analysis.py      - input files, buffer distances, dependent variable and
                                    controls
                                  - build the network per neighborhood
