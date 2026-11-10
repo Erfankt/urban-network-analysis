@@ -100,6 +100,17 @@ python run_analysis.py --reuse        # rerun with the previously saved answers,
 python run_analysis.py --recompute    # ignore the checkpoints (see below) and measure every buffer again
 ```
 
+| Argument | Default |
+|---|---|
+| `--streets` | `../data/streetnetwork/streets.shp` |
+| `--neighborhoods` | `../data/neighborhoods/neighborhoods.shp` |
+| `--id-col` | `id` (otherwise the first column that is unique and complete) |
+| `--buffers` | `0.1,0.25,0.5,0.75,1.0` (miles) |
+| `--crime` | none; chosen from the numeric columns |
+| `--controls` | none; chosen from the numeric columns |
+| `--reuse` | off |
+| `--recompute` | off |
+
 The answers are saved to `data/final_dataset/user_selection.json`; on the next run the script offers to reuse them. A new setup starts a fresh file, so the stage-2 choices are made again on the new inputs.
 
 It then runs `StreetNetworkProcessor` (`src/street_network_processor.py`):
