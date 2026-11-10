@@ -1,5 +1,7 @@
 # Street Network Configuration and Property Crime: data pipeline
 
+> **Under construction.** This branch (`data-service`) extends the pipeline with a data service: a PostGIS database, a REST API and an interactive dashboard. It currently serves the Charlotte case study only; the plan is to generalize it so that the dataset built by the pipeline for any city can be loaded and explored. The stable, pipeline-only version is on [`master`](https://github.com/Erfankt/urban-network-analysis).
+
 Reproducible data-construction pipeline for the paper
 
 > Kefayat, E., & Thill, J.-C. (2025). *Urban Street Network Configuration and Property Crime: An Empirical Multivariate Case Study.* ISPRS International Journal of Geo-Information, 14(5), 200. https://doi.org/10.3390/ijgi14050200
