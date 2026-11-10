@@ -110,7 +110,7 @@ python run_analysis.py --recompute    # ignore the checkpoints (see below) and m
 | `--reuse` | off |
 | `--recompute` | off |
 
-The answers are saved to `data/final_dataset/user_selection.json`; on the next run the script offers to reuse them. A new setup starts a fresh file, so the stage-2 choices are made again on the new inputs.
+The answers are saved to `data/final_dataset/user_selection.json` . On the next run the script offers to reuse them.
 
 It then runs `StreetNetworkProcessor` (`src/street_network_processor.py`):
 
