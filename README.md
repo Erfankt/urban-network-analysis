@@ -17,13 +17,13 @@ data/streetnetwork/streets.shp            data/neighborhoods/neighborhoods.shp
             |                                        |
             v                                        v
   1. python run_analysis.py      - input files, buffer distances, dependent variable and
-                                   controls (prompts with defaults, or command-line flags)
+                                   controls
                                  - build the network per neighborhood
                                    (checkpointed in data/checkpoints/: an interrupted run resumes)
                                  -> data/final_dataset/extracted_measures.shp
             |
             v
-  2. pca_analysis.ipynb  or  python pca_analysis.py
+  2. python pca_analysis.py
                                  - choose the extraction method
                                  - street-network block: overview, inspect candidate solutions,
                                    choose the number of components, choose one representative
@@ -137,13 +137,13 @@ The run can take a while for a city-sized network: the centrality and shortest-p
 
 **Checkpoints and resuming.** The measures are saved as they are produced, not at the end: each buffer has a CSV in `data/checkpoints/<fingerprint>/` to which a neighborhood's row is appended the moment it has been measured. A run that stops for any reason (an error, Ctrl+C, the computer going to sleep) therefore loses at most the neighborhood in progress; `python run_analysis.py --reuse` continues from there, skipping the neighborhoods and buffers already done. The checkpoints are keyed by a fingerprint of the street and neighborhood geometries (`inputs.json` in the folder says which files they came from), so a run with other layers never reuses them by mistake, while a run with the same layers reuses them even if the attributes changed: changing the crime column or the control variables, or adding a buffer distance, costs only the new work. `extracted_measures.shp` is assembled from the checkpoints at the end of every run and overwritten, since rebuilding it takes seconds. `--recompute` deletes the checkpoints of the buffers in the run before measuring (after a change to the measure code, say), so a recompute run that is interrupted and then resumed with `--reuse` never falls back on old files; deleting the folder has the same effect. The folder is not tracked by git.
 
-## Stage 2: component analysis (`src/pca_analysis.ipynb` or `src/pca_analysis.py`)
+## Stage 2: component analysis (`src/pca_analysis.py`)
 
 The notebook and the script perform the same steps with the same functions (`src/common.py`, `src/user_inputs.py`, `src/final_dataset.py`); use whichever you prefer. The script saves every figure to `output/pca_diagnostics/` and, by default, also opens the component-analysis figures in windows so they can be examined while a prompt waits (close the windows to continue); `--no-windows` runs it headless and `--no-distribution-plots` skips the per-variable figures.
 
 ```bash
 cd src
-python pca_analysis.py                 # or open pca_analysis.ipynb in Jupyter
+python pca_analysis.py
 ```
 
 Steps:
