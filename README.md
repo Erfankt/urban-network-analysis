@@ -51,32 +51,27 @@ Python 3.11 is recommended (implemented version in the paper). The dependencies 
    pip install streamlit
    streamlit run app/streamlit_app.py
    ```
-3. The app opens and navigates to **0 · Setup** (see below).
+3. The app opens and navigates to **0 · Setup**.
 
-**From the terminal (for the scripts).** Create and fill the environment once.
+**3. From the terminal (for the scripts)**
 
-1. Create the environment (first time only):
-
-```bash
-python -m venv .venv
-```
-
+1. Create the virtual environment (first time only):
+   ```bash
+   python -m venv .venv
+   ```
 2. Activate it (in every new terminal; the prompt then starts with `(.venv)`):
-
-```bash
-# Windows, Command Prompt
-.venv\Scripts\activate
-# Windows, PowerShell
-.venv\Scripts\Activate.ps1
-# macOS / Linux
-source .venv/bin/activate
-```
-
+   ```bash
+   # Windows, Command Prompt
+   .venv\Scripts\activate
+   # Windows, PowerShell
+   .venv\Scripts\Activate.ps1
+   # macOS / Linux
+   source .venv/bin/activate
+   ```
 3. Install the dependencies (first time, or after `requirements.txt` changes):
-
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 To see whether an existing environment is already complete, activate it and run `python -c "import geopandas, networkx, scipy, tqdm, factor_analyzer, matplotlib, seaborn, folium, sklearn; print(sklearn.__version__)"`: if it prints a version without an error, skip step 3. `requirements.txt` pins scikit-learn because `factor_analyzer` 0.5.x uses an interface that scikit-learn 1.8 removed: Python up to 3.13 gets the tested `<1.6`, and Python 3.14+ (which has no prebuilt `scikit-learn<1.6`) gets `1.7`, with identical component-analysis results. An error such as `check_array() got an unexpected keyword argument 'force_all_finite'` means the script is running outside this environment, with scikit-learn 1.8 or newer: activate the environment and run it again. Jupyter is only needed for the notebook version of stage 2; start it from the activated environment. The last group of `requirements.txt` (Streamlit and three small packages) is only needed for the web interface.
 
