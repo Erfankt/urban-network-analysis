@@ -206,60 +206,9 @@ The app calls the same functions in `src/` as the terminal scripts, so the same 
 **The assistant.** A chat panel beside the page explains the steps, measures and diagnostics, and interprets the current run. It can suggest how many components to keep or which measure to pick, and look things up in your data through a few read-only tools (`app/tools.py`); every choice is still made by you, and it cannot run code or change files (`ASSISTANT_TOOLS=0` in `.env` turns the lookups off). It needs a model: paste a free Gemini or Groq key in the panel, or install [Ollama](https://ollama.com/) and press the button that downloads the `llama3.2` model. Without one, the rest of the app works as before.
 
 
-## Data Service & Interactive Dashboard
+## Data service (under construction)
 
-In addition to the reproducibility pipeline, the repository includes a **production-style data service** that exposes the research dataset through a REST API and visualises it in an interactive Streamlit dashboard.
-
-![Dashboard demo — crime choropleth, network metrics scatter, and spatial proximity tool](docs/dashboard_demo.gif)
-
-### Architecture
-
-```
-PostGIS (Docker)          FastAPI (Docker)          Streamlit dashboard (native)
-urban_crime_db            urban_crime_api            localhost:8501
-port 5433 ──────────────► port 8000 ──────────────► Tab 1: choropleth crime map (371 NPAs, 1 API call)
-                                                     Tab 2: network metrics explorer (scatter / bar)
-                                                     Tab 3: spatial proximity tool (PostGIS ST_DWithin)
-```
-
-The database and API run in Docker Compose; the dashboard runs natively (the university TLS-inspection proxy blocks pip inside Docker containers — the dashboard has no binary dependencies so plain pip on Windows works fine).
-
-### Prerequisites
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (for PostGIS + FastAPI)
-- Python 3.11 with `pip` (for the Streamlit dashboard)
-- The NPA geometries and crime data loaded into PostGIS (see `db/schema.sql`)
-
-### Start the stack
-
-```bash
-# 1. Start PostGIS and FastAPI
-cd db
-docker compose up -d postgis api
-
-# 2. Start the dashboard (in a separate terminal, keep it open)
-cd dashboard
-pip install -r requirements.txt   # first time only
-streamlit run app.py
-```
-
-The dashboard opens at **http://localhost:8501**. The API docs are at **http://localhost:8000/docs**.
-
-### API endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/npa` | All 371 NPAs as a flat JSON list |
-| `GET` | `/npa/geojson` | All 371 NPAs as a WGS84 GeoJSON FeatureCollection |
-| `GET` | `/npa/{npa_id}` | One NPA with full network metrics |
-| `GET` | `/metrics/top` | NPAs ranked by a network metric at a chosen buffer |
-| `GET` | `/spatial/near` | NPAs within *r* miles of a lon/lat point (PostGIS ST_DWithin) |
-
-### Dashboard tabs
-
-- **Crime Map** — choropleth of property crime rate (crimes per 1,000 residents) across all 371 NPAs, loaded in a single `/npa/geojson` call; hover tooltip shows NPA ID, crime count and rate; top-10 sidebar table.
-- **Network Metrics Explorer** — scatter plot (with OLS trendline) or bar chart of any of the 8 street-network metrics at any of the 5 buffer distances vs. crime rate; interactive, filter-ready.
-- **Spatial Proximity Tool** — enter any WGS84 coordinate and a radius; returns nearby NPAs ranked by crime rate, shown on a folium map and in a colour-graded table.
+A PostGIS database, a REST API and an interactive dashboard that serve the pipeline's dataset are being developed on the [`data-service`](https://github.com/Erfankt/urban-network-analysis/tree/data-service) branch. They currently cover the Charlotte case study only; the goal is to load the dataset built by the pipeline for any city.
 
 ## Repository structure
 
@@ -290,18 +239,6 @@ The dashboard opens at **http://localhost:8501**. The API docs are at **http://l
 |   |-- final_dataset.py             assembly of the final dataset and its data dictionary
 |   |-- pca_analysis.ipynb           stage 2 and 3, notebook version
 |   `-- pca_analysis.py              stage 2 and 3, script version
-|-- api/
-|   |-- main.py                      FastAPI service: /npa, /npa/geojson, /metrics/top, /spatial/near
-|   |-- models.py                    SQLAlchemy ORM models (NPA, NPACrime, NetworkMetric)
-|   |-- requirements.txt             fastapi, uvicorn, sqlalchemy, psycopg2-binary, geoalchemy2
-|   `-- Dockerfile                   python:3.11-slim; no GDAL dependency
-|-- dashboard/
-|   |-- app.py                       Streamlit dashboard: crime map, network explorer, proximity tool
-|   |-- requirements.txt             streamlit, folium, plotly, statsmodels (no geopandas/GDAL)
-|   `-- Dockerfile                   pure-Python image (university proxy blocks Docker pip; run natively)
-|-- db/
-|   |-- schema.sql                   PostGIS schema: npa, npa_crime, network_metrics tables
-|   `-- docker-compose.yml           postgis/postgis:16-3.4 + FastAPI; dashboard runs natively
 |-- .env.example            settings of the assistant (copy to .env)
 |-- .streamlit/config.toml  display settings of the web app
 |-- start_app.bat           double-click launcher (Windows); start_app.command for macOS/Linux
