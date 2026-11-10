@@ -1,13 +1,14 @@
 """
 Stage 1: build the neighborhood street networks and measure their configuration.
 
-    python run_analysis.py              interactive: every input is prompted for, Enter accepts the default
+    python run_analysis.py              reads the layers from the default locations below; the remaining
+                                        choices are prompted for, Enter accepts the default
     python run_analysis.py --reuse      rerun with the previously saved answers, without prompts
                                         (also the way to continue an interrupted run)
     python run_analysis.py --streets ../data/streetnetwork/streets.shp \\
                            --neighborhoods ../data/neighborhoods/neighborhoods.shp --id-col id \\
                            --buffers 0.1,0.25,0.5,0.75,1.0 --crime propcrimct --controls bachdg,med_age,emp
-                                        answers given up front; anything missing is prompted for
+                                        layers elsewhere and answers given up front; anything missing is prompted for
 
 Inputs and choices are recorded in data/final_dataset/user_selection.json, which stage 2
 (pca_analysis.ipynb / pca_analysis.py) reads. Output: data/final_dataset/extracted_measures.shp,
@@ -22,7 +23,7 @@ import argparse, sys, warnings
 warnings.filterwarnings("ignore")
 
 # --------------------------------------------------------------------------
-## DEFAULTS offered by the prompts (press Enter to accept)
+## DEFAULTS (input layer locations, and the buffers offered at the prompt)
 # --------------------------------------------------------------------------
 DEFAULTS = {
     "streets_path": "../data/streetnetwork/streets.shp",

@@ -89,7 +89,7 @@ cd src
 python run_analysis.py
 ```
 
-The script asks for everything it needs, showing a default in brackets that Enter accepts: the two input shapefiles (validated as described above), the neighborhood identifier column (`id` when the layer has one that is unique and complete, otherwise the first column that is), the buffer distances in miles (comma-separated; the paper's five are the default; the distances must be positive and distinct and must yield column names within the 10-character shapefile limit, so at most two decimals), then, from the numeric columns of the neighborhoods layer, the dependent variable (crime count) and the control variables, by number or name. The defaults live in `DEFAULTS` at the top of `run_analysis.py`.
+The script reads the two layers from the default locations above (use `--streets` / `--neighborhoods` for other paths), then prompts for the neighborhood identifier column, the buffer distances in miles (comma-separated; the paper's five are the default), the dependent variable (crime count), and the control variables. Press Enter to accept a default.
 
 The same answers can be given up front, for scripted or repeated runs; whatever is missing is still prompted for:
 

@@ -22,7 +22,7 @@ front ends (the web app) can use them without a terminal:
     save_selection()      write the stage-1 selection
     id_column()           the identifier column of a saved selection ('id' for the files of earlier versions)
 """
-import os, json
+import os, sys, json
 import geopandas as gpd
 from crs_units import ensure_projected, metres_per_unit, unit_name
 from street_network_processor import StreetNetworkProcessor, NETWORK_METRICS, align_neighborhoods_crs, crs_label
@@ -179,27 +179,28 @@ def inspect_inputs(streets_path, neighborhoods_path, id_col=DEFAULT_ID_COL):
 
 
 def select_input_files(defaults, preset=None):
-    """Ask for the two input shapefiles (or take them from preset), validate, return (streets, nbhd, gdf)."""
+    """Take the two input shapefiles from preset (command-line flags) or the default locations,
+    without asking; validate them and return (streets, nbhd, gdf). Stops with a message if they
+    are missing or cannot be processed."""
     preset = dict(preset or {})
-    while True:
-        streets = preset.get("streets_path") or _ask("Street centerline shapefile", defaults["streets_path"])
-        nbhd = preset.get("neighborhoods_path") or _ask("Neighborhoods shapefile", defaults["neighborhoods_path"])
-        try:
-            info = inspect_inputs(streets, nbhd, id_col=None)      # the identifier column is asked next
-        except Exception as e:
-            print(f"  -> {e}")
-            preset = {}
-            continue
-        if info["problems"]:
-            print("  -> the layers cannot be processed as they are:")
-            for p in info["problems"]:
-                print(f"     - {p}")
-            preset = {}
-            continue
-        if info["note"]:
-            print(f"  note: {info['note']}")
-        print(f"  {info['summary']}")
-        return streets, nbhd, info["neighborhoods"]
+    streets = preset.get("streets_path") or defaults["streets_path"]
+    nbhd = preset.get("neighborhoods_path") or defaults["neighborhoods_path"]
+    print(f"  streets       : {streets}\n  neighborhoods : {nbhd}")
+    missing = [f for f in (streets, nbhd) if not os.path.exists(f)]
+    if missing:
+        sys.exit("  -> not found: " + ", ".join(missing) + "\n     Put the layers in data/streetnetwork/ and "
+                 "data/neighborhoods/, or pass --streets / --neighborhoods.")
+    try:
+        info = inspect_inputs(streets, nbhd, id_col=None)      # the identifier column is asked next
+    except Exception as e:
+        sys.exit(f"  -> {e}")
+    if info["problems"]:
+        sys.exit("  -> the layers cannot be processed as they are:\n"
+                 + "\n".join(f"     - {p}" for p in info["problems"]))
+    if info["note"]:
+        print(f"  note: {info['note']}")
+    print(f"  {info['summary']}")
+    return streets, nbhd, info["neighborhoods"]
 
 
 # --------------------------------------------------------------------------
