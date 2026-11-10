@@ -11,29 +11,22 @@ The pipeline has two front ends over the same code: the terminal scripts describ
 
 ## Workflow
 
-```
-data/streetnetwork/streets.shp  +  data/neighborhoods/neighborhoods.shp
-(cleaned street centerline)        (polygons: id, crime variable, control variables)
-            |
-            v
-  1. python run_analysis.py      - input files, buffer distances, dependent variable and
-                                   controls
-                                 - build the network per neighborhood
-                                   (checkpointed in data/checkpoints/: an interrupted run resumes)
-                                 -> data/final_dataset/extracted_measures.shp
-            |
-            v
-  2. python pca_analysis.py
-                                 - choose the extraction method
-                                 - street-network block: overview, inspect candidate solutions,
-                                   choose the number of components, choose one representative
-                                   measure per component
-                                 - socio-spatial block: overview, inspect, choose
-            |
-            v
-  3. final dataset               -> data/final_dataset/final_dataset.shp / .csv
-                                 -> data/final_dataset/final_dataset_dictionary.csv
-                                 -> data/final_dataset/user_selection.json
+```mermaid
+flowchart TD
+    S1["streets.shp\nstreet centerlines"]
+    S2["neighborhoods.shp\npolygons: id, crime variable, control variables"]
+
+    S1 & S2 --> P1["Build per-neighborhood street networks\nMeasure configuration at multiple buffer distances"]
+
+    SC1(["run_analysis.py"]) -. executes .-> P1
+
+    P1 --> D1[("extracted_measures.shp")]
+
+    D1 --> P2["Reduce dimensionality\nSelect representative measures per component"]
+
+    SC2(["pca_analysis.py"]) -. executes .-> P2
+
+    P2 --> D2[("final_dataset.shp / .csv\nfinal_dataset_dictionary.csv\nuser_selection.json")]
 ```
 
 ## Setup
