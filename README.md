@@ -31,7 +31,7 @@ flowchart TD
 
 ## Setup
 
-Python 3.11 is recommended (the paper's computations used it). The dependencies live in a virtual environment, `.venv`, in the repository folder. There are two ways to set it up; the second is only for the terminal scripts.
+Python 3.11 is recommended (implemented version in the paper). The dependencies live in a virtual environment, `.venv`, in the repository folder. There are three ways to set it up; the third is only for the terminal scripts.
 
 **Quickest start (double-click).** Install Python 3.11, then double-click `start_app.bat` (Windows) or `start_app.command` (macOS; Linux: run `./start_app.command`; the first time on macOS/Linux, make it executable with `chmod +x start_app.command`). The launcher creates `.venv` and installs Streamlit the first time, starts the app in the background and opens your browser; its window closes by itself (Windows) or can be closed, and the page's **0 · Setup** section installs the rest. **Closing the app's browser tab stops the app** about half a minute later (a refresh does not); set `KEEP_RUNNING=1` in the environment to keep the server running instead. The two routes below do the same by hand.
 
