@@ -147,7 +147,7 @@ Steps:
 
 1. Load `extracted_measures.shp` and the saved variable selection; produce an interactive map (HTML), descriptive statistics, a missing-value check and per-variable distribution plots. The run stops if any selected variable has missing values (the correlation matrix is undefined); fix them in the neighborhoods layer, rerun stage 1 with `--reuse` (seconds, from the checkpoints), then run stage 2 again.
 2. Extraction method (prompt): `principal`, `minres` (the `factor_analyzer` default, used in the original computation) or `ml`. Rotation is varimax, as in the paper.
-3. Street-network block: (a) overview: correlation heatmap, scree plot with the Kaiser line, eigenvalue table; (b) inspect: type a number of components to see the full report (loadings, variance explained, communalities, cross-loadings), as often as needed; (c) choose the number to retain; (d) choose one representative measure per retained component from the top-loading candidates. These measures, not the component scores, are the street-network regressors, entered after a log(x + 1) transformation.
+3. Street-network block: (a) overview: correlation heatmap, scree plot with the Kaiser line, eigenvalue table; (b) inspect: type a number of components to see the full report (loadings, variance explained, communalities, cross-loadings), as often as needed; (c) choose the number to retain; (d) choose one representative measure per retained component from the top-loading candidates. The chosen measures, not the component scores, are the street-network regressors.
 4. Socio-spatial block: the same overview, inspect and final choice; the retained component scores are the controls.
 
 All choices are appended to `user_selection.json`, which after both stages reads like:
