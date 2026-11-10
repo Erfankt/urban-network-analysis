@@ -136,7 +136,7 @@ Column names are `<metric code><buffer code>`, where the buffer code is the dist
 
 ## Stage 2: component analysis (`src/pca_analysis.py`)
 
-The notebook and the script perform the same steps with the same functions (`src/common.py`, `src/user_inputs.py`, `src/final_dataset.py`); use whichever you prefer. The script saves every figure to `output/pca_diagnostics/` and, by default, also opens the component-analysis figures in windows so they can be examined while a prompt waits (close the windows to continue); `--no-windows` runs it headless and `--no-distribution-plots` skips the per-variable figures.
+The script saves every figure to `output/pca_diagnostics/` and also opens the component-analysis figures in windows (close them to continue). `--no-windows` runs it headless and `--no-distribution-plots` skips the per-variable figures.
 
 ```bash
 cd src
