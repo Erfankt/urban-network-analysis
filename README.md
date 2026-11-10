@@ -51,7 +51,7 @@ Python 3.11 is recommended (implemented version in the paper). The dependencies 
    pip install streamlit
    streamlit run app/streamlit_app.py
    ```
-3. The page's **0 · Setup** section checks the Python version, the `.venv`, and every package in `requirements.txt`. If everything is in place, it shows a single status line and moves straight to the inputs. If something is missing, it lists the missing packages and lets you install into a new `.venv`, the existing one, or the running Python — one button does it, with live pip output. Requires an internet connection; takes a few minutes the first time.
+3. The app opens and navigates to **0 · Setup** (see below).
 
 **From the terminal (for the scripts).** Create and fill the environment once.
 
