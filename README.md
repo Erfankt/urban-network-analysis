@@ -6,9 +6,6 @@ Reproducible data-construction pipeline for the paper
 
 Starting from a cleaned street centerline layer and a set of neighborhood polygons, the pipeline builds the neighborhood-level street networks, measures their configuration at different nested spatial scales, reduces the dimensionality, and writes a modeling-ready dataset.
 
-
-The pipeline has two front ends over the same code: the terminal scripts described below, and a **web interface** (`app/`, see *Web interface*).
-
 ## Workflow
 
 ```mermaid
