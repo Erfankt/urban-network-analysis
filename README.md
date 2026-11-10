@@ -75,12 +75,12 @@ Python 3.11 is recommended (implemented version in the paper). The dependencies 
 
 ## Input data
 
-The default locations are the ones below (other paths can be given at the prompt or with `--streets` / `--neighborhoods`; any `.shp` under `data/` is ignored by git). The **streets layer can be in any projected coordinate reference system**, in feet or metres (a State Plane or UTM zone, say): the processor reads the CRS length unit and converts the buffer distances from miles, areas to acres, street density to feet per acre and shortest paths to miles, so the measures do not depend on the unit. A streets layer in latitude/longitude (e.g. EPSG:4326) is moved, together with the neighborhoods, to the UTM zone that fits its extent, and the run says so. The streets define the working CRS; if the neighborhoods layer is in a different CRS it is reprojected to the streets CRS automatically, and the run prints a note saying so (your files are not modified). Two definitions of the same system, e.g. an EPSG code and the WKT written by desktop GIS software, are recognised as such (no coordinate moves when reprojecting) and the geometry is left untouched. The setup checks both layers before anything runs: both have a CRS, the streets CRS has a readable length unit (projected, or latitude/longitude, which is moved to UTM), line and polygon geometries, and an identifier column with a distinct, non-missing value in every polygon. That column is chosen at setup (`id` by default, or `--id-col`); it keys the checkpoints and is kept under its own name in every output table.
+The default locations are below. The streets layer can be in any projected CRS (feet or metres) or latitude/longitude. The pipeline converts units automatically. If the neighborhoods layer is in a different CRS, it is reprojected to match the streets layer. The setup validates both layers before anything runs.
 
 | File | Content | Requirements |
 |---|---|---|
-| `data/streetnetwork/streets.shp` | Street centerlines (LineString or MultiLineString) | Already cleaned: the pipeline assumes non-functional segments (e.g. retired or non-service roads) have been removed. |
-| `data/neighborhoods/neighborhoods.shp` | Neighborhood polygons | A unique identifier column (`id` by default; any column can be chosen); a numeric crime column; numeric columns for the control variables.
+| `data/streetnetwork/streets.shp` | Street centerlines (LineString or MultiLineString) | Already cleaned: the paper assumes non-functional segments (e.g. retired or non-service roads) have been removed. |
+| `data/neighborhoods/neighborhoods.shp` | Neighborhood polygons | A unique identifier column (`id` by default; any column can be chosen) + a numeric crime column + numeric columns for the control variables.
 
 ## Stage 1: street-network measures (`src/run_analysis.py`)
 
